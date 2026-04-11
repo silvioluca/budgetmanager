@@ -1,4 +1,4 @@
-  // ─── Stato applicazione ───────────────────────────────────────
+// ─── Stato applicazione ───────────────────────────────────────
   const state = {
     sidebarOpen: false,
     theme: 'dark',
@@ -1506,9 +1506,6 @@
     });
   });
 
-  // ── Avvio app: carica tutto in una volta ──
-  initApp();
-
   // ─── Sezione Utenze domestiche ────────────────────────────────
   const UTENZE = [
     { cat: 'Spese condominiali', color: '#5b9bff', label: 'Condominio' },
@@ -2079,3 +2076,6 @@
   }
 
 
+
+  // ── Avvio app: carica tutto in una volta ──
+  initApp();
