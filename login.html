@@ -145,7 +145,7 @@
     const hash = await sha256(val);
     if (hash === PASSWORD_HASH) {
       sessionStorage.setItem('bm_auth', '1');
-      window.location.replace('dashboard.html');
+      window.location.replace('app.html');
     } else {
       document.getElementById('loginError').classList.add('visible');
       document.getElementById('pwdInput').value = '';
