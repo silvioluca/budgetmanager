@@ -290,14 +290,17 @@
 
   async function initApp() {
     try {
-      const json = await asCall({ action: 'read_all' });
+      const [json, jsonMutuo] = await Promise.all([
+        asCall({ action: 'read' }),
+        asCall({ action: 'read_sheet', sheet: 'Mutuo' })
+      ]);
       if (json.status !== 'ok') throw new Error(json.message);
 
       // Popola allRows (spese)
       allRows = json.rows || [];
 
       // Popola mAllRate (mutuo)
-      mAllRate = json.mutuo || [];
+      mAllRate = jsonMutuo.status === 'ok' ? (jsonMutuo.rows || []) : [];
 
       loadingBanner.remove();
 
