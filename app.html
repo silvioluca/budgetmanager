@@ -113,6 +113,14 @@
       Mutuo
     </div>
 
+    <div class="nav-item" data-section="cashflow">
+      <svg class="nav-icon" viewBox="0 0 18 18" fill="none">
+        <polyline points="2,13 6,8 9,11 13,5 16,7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+        <line x1="2" y1="16" x2="16" y2="16" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+      </svg>
+      Cashflow
+    </div>
+
   </nav>
 
   <!-- ─── MAIN ─────────────────────────────────────────────────── -->
@@ -731,6 +739,86 @@
         </div>
 
       </div>
+    </section>
+
+
+    <!-- ── SEZIONE: Cashflow ────────────────────────────────────── -->
+    <section class="section" id="sec-cashflow">
+
+      <!-- Filtro anno -->
+      <div class="dash-filters">
+        <div class="dash-filter-group">
+          <label class="form-label">Anno</label>
+          <select class="filter-select" id="cfAnnoSelect" style="width:110px;"></select>
+        </div>
+        <div class="dash-filter-group">
+          <label class="form-label">Di chi?</label>
+          <select class="filter-select" id="cfPaganteSelect" style="width:120px;">
+            <option value="">Tutti</option>
+            <option value="Silvio">Silvio</option>
+            <option value="Giulia">Giulia</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- KPI cards -->
+      <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:20px;">
+        <div class="kpi-card">
+          <span class="kpi-label">Media entrate/mese</span>
+          <span class="kpi-value kpi-green" id="cfKpiEntrate">—</span>
+          <span class="kpi-sub">anno selezionato</span>
+        </div>
+        <div class="kpi-card">
+          <span class="kpi-label">Media uscite/mese</span>
+          <span class="kpi-value kpi-red" id="cfKpiUscite">—</span>
+          <span class="kpi-sub">anno selezionato</span>
+        </div>
+        <div class="kpi-card">
+          <span class="kpi-label">Saldo medio/mese</span>
+          <span class="kpi-value" id="cfKpiSaldo">—</span>
+          <span class="kpi-sub">entrate − uscite</span>
+        </div>
+        <div class="kpi-card">
+          <span class="kpi-label">Proiezione fine anno</span>
+          <span class="kpi-value kpi-blue" id="cfKpiProiezione">—</span>
+          <span class="kpi-sub">mesi rimanenti × saldo medio</span>
+        </div>
+      </div>
+
+      <!-- Grafico area: entrate vs uscite + previsione -->
+      <div class="dash-card" style="margin-bottom:16px;">
+        <div class="dash-card-title">Entrate vs Uscite — storico + previsione</div>
+        <div class="chart-wrap" style="height:280px;"><canvas id="cfChartArea"></canvas></div>
+      </div>
+
+      <!-- Layout 2 colonne: barre categorie + tabella -->
+      <div class="dash-main">
+
+        <div class="dash-left">
+          <!-- Top categorie uscite -->
+          <div class="dash-card">
+            <div class="dash-card-title">Top categorie uscite (media mensile)</div>
+            <div class="chart-wrap" style="height:280px;"><canvas id="cfChartBarUsc"></canvas></div>
+          </div>
+          <!-- Top categorie entrate -->
+          <div class="dash-card" style="margin-top:16px;">
+            <div class="dash-card-title">Top categorie entrate (media mensile)</div>
+            <div class="chart-wrap" style="height:220px;"><canvas id="cfChartBarEnt"></canvas></div>
+          </div>
+        </div>
+
+        <div class="dash-right">
+          <!-- Tabella dettagliata mese per mese -->
+          <div class="dash-card">
+            <div class="dash-card-title">Dettaglio mensile + previsione</div>
+            <div style="overflow-x:auto;">
+              <table class="riepilogo-table" id="cfTabella"></table>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
     </section>
 
   </main>

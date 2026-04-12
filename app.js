@@ -1,4 +1,4 @@
-// ─── Stato applicazione ───────────────────────────────────────
+  // ─── Stato applicazione ───────────────────────────────────────
   const state = {
     sidebarOpen: false,
     theme: 'dark',
@@ -290,17 +290,14 @@
 
   async function initApp() {
     try {
-      const [json, jsonMutuo] = await Promise.all([
-        asCall({ action: 'read' }),
-        asCall({ action: 'read_sheet', sheet: 'Mutuo' })
-      ]);
+      const json = await asCall({ action: 'read_all' });
       if (json.status !== 'ok') throw new Error(json.message);
 
       // Popola allRows (spese)
       allRows = json.rows || [];
 
       // Popola mAllRate (mutuo)
-      mAllRate = jsonMutuo.status === 'ok' ? (jsonMutuo.rows || []) : [];
+      mAllRate = json.mutuo || [];
 
       loadingBanner.remove();
 
@@ -312,6 +309,7 @@
       if (s === 'tabelle')  renderTabelle();
       if (s === 'utenze')   renderUtenze();
       if (s === 'mutuo')    buildMutuo(mAllRate);
+      if (s === 'cashflow') renderCashflow();
 
     } catch(e) {
       loadingBanner.innerHTML = `<span style="color:var(--accent-red);">⚠ Errore caricamento. Ricarica la pagina.</span>`;
@@ -1506,6 +1504,7 @@
       if (s === 'tabelle')  renderTabelle();
       if (s === 'utenze')   renderUtenze();
       if (s === 'mutuo')    { if (mAllRate.length) buildMutuo(mAllRate); }
+      if (s === 'cashflow') renderCashflow();
     });
   });
 
@@ -2078,7 +2077,254 @@
     document.getElementById('mTabella').innerHTML = h;
   }
 
+  // ─── Sezione Cashflow ─────────────────────────────────────────
+  let cfChartArea = null, cfChartBarUsc = null, cfChartBarEnt = null;
+
+  function renderCashflow() {
+    const anno    = document.getElementById('cfAnnoSelect').value;
+    const pagante = document.getElementById('cfPaganteSelect').value;
+
+    if (!allRows.length) return;
+
+    // Filtra per pagante
+    let rows = pagante ? allRows.filter(r => r.pagante === pagante) : allRows;
+
+    // Anni disponibili
+    const anniDisp = [...new Set(allRows.map(r => r.anno).filter(Boolean))].sort((a,b) => b-a);
+    const cfAnnoEl = document.getElementById('cfAnnoSelect');
+    if (cfAnnoEl.options.length === 0) {
+      anniDisp.forEach(a => {
+        const o = document.createElement('option');
+        o.value = a; o.textContent = a;
+        cfAnnoEl.appendChild(o);
+      });
+    }
+
+    const annoSel = anno || anniDisp[0];
+    if (!anno && cfAnnoEl.value !== annoSel) cfAnnoEl.value = annoSel;
+
+    // Filtra per anno
+    rows = rows.filter(r => r.anno === annoSel);
+
+    const MESI = ['Gen','Feb','Mar','Apr','Mag','Giu','Lug','Ago','Set','Ott','Nov','Dic'];
+    const oggi = new Date();
+    const meseCorrente = oggi.getFullYear().toString() === annoSel ? oggi.getMonth() : 11; // 0-indexed
+
+    // Aggregazione per mese
+    const entratePerMese = Array(12).fill(0);
+    const uscitePerMese  = Array(12).fill(0);
+
+    rows.forEach(r => {
+      const m = parseInt(r.mese) - 1; // 0-indexed
+      if (m < 0 || m > 11) return;
+      const v = parseFloat(String(r.costo).replace(',', '.')) || 0;
+      if (r.tipo === 'Entrata') entratePerMese[m] += v;
+      else uscitePerMese[m] += v;
+    });
+
+    // Mesi con dati (storici)
+    const mesiConDati = entratePerMese.map((e, i) => e > 0 || uscitePerMese[i] > 0);
+    const nMesiStorici = mesiConDati.filter(Boolean).length || 1;
+
+    const mediaEntrate = entratePerMese.reduce((s,v) => s+v, 0) / nMesiStorici;
+    const mediaUscite  = uscitePerMese.reduce((s,v) => s+v, 0)  / nMesiStorici;
+    const mediaSaldo   = mediaEntrate - mediaUscite;
+
+    // Mesi futuri da proiettare
+    const mesiFuturi = 11 - meseCorrente;
+    const proiezione = mediaSaldo * mesiFuturi;
+
+    // KPI
+    const fmtEurCf = v => v.toLocaleString('it-IT', { style:'currency', currency:'EUR', maximumFractionDigits:0 });
+    document.getElementById('cfKpiEntrate').textContent    = fmtEurCf(mediaEntrate);
+    document.getElementById('cfKpiUscite').textContent     = fmtEurCf(mediaUscite);
+    const saldoEl = document.getElementById('cfKpiSaldo');
+    saldoEl.textContent = fmtEurCf(mediaSaldo);
+    saldoEl.className   = 'kpi-value ' + (mediaSaldo >= 0 ? 'kpi-green' : 'kpi-red');
+    const projEl = document.getElementById('cfKpiProiezione');
+    projEl.textContent = fmtEurCf(proiezione);
+    projEl.className   = 'kpi-value ' + (proiezione >= 0 ? 'kpi-green' : 'kpi-red');
+
+    const isDark    = document.documentElement.getAttribute('data-theme') !== 'light';
+    const gridColor = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
+    const textColor = isDark ? '#888' : '#666';
+    Chart.defaults.color = textColor;
+    Chart.defaults.font.family = 'DM Sans';
+    Chart.defaults.font.size = 11;
+
+    // ── Grafico area storico + previsione ──
+    const labelsArea = MESI;
+    const dataEnt   = entratePerMese.map((v, i) => i <= meseCorrente ? v : null);
+    const dataUsc   = uscitePerMese.map((v, i)  => i <= meseCorrente ? v : null);
+    const dataPrevEnt = entratePerMese.map((v, i) => i >= meseCorrente ? (i === meseCorrente ? v || mediaEntrate : mediaEntrate) : null);
+    const dataPrevUsc = uscitePerMese.map((v, i)  => i >= meseCorrente ? (i === meseCorrente ? v || mediaUscite  : mediaUscite)  : null);
+
+    if (cfChartArea) cfChartArea.destroy();
+    const oldA = document.getElementById('cfChartArea');
+    const ncA = document.createElement('canvas'); ncA.id = 'cfChartArea';
+    oldA.parentNode.replaceChild(ncA, oldA);
+
+    cfChartArea = new Chart(ncA, {
+      type: 'line',
+      data: {
+        labels: labelsArea,
+        datasets: [
+          {
+            label: 'Entrate',
+            data: dataEnt,
+            borderColor: '#2ecc71', backgroundColor: 'rgba(46,204,113,0.08)',
+            borderWidth: 2, pointRadius: 3, fill: true, tension: 0.3, spanGaps: false
+          },
+          {
+            label: 'Uscite',
+            data: dataUsc,
+            borderColor: '#ff3b3b', backgroundColor: 'rgba(255,59,59,0.08)',
+            borderWidth: 2, pointRadius: 3, fill: true, tension: 0.3, spanGaps: false
+          },
+          {
+            label: 'Entrate (prev.)',
+            data: dataPrevEnt,
+            borderColor: '#2ecc71', backgroundColor: 'transparent',
+            borderWidth: 2, borderDash: [6,4], pointRadius: 2, fill: false, tension: 0.3, spanGaps: true
+          },
+          {
+            label: 'Uscite (prev.)',
+            data: dataPrevUsc,
+            borderColor: '#ff3b3b', backgroundColor: 'transparent',
+            borderWidth: 2, borderDash: [6,4], pointRadius: 2, fill: false, tension: 0.3, spanGaps: true
+          }
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { position: 'bottom', labels: { boxWidth: 12, padding: 16 } },
+          tooltip: { callbacks: { label: ctx => ' ' + fmtEurCf(ctx.parsed.y || 0) } }
+        },
+        scales: {
+          x: { grid: { color: gridColor } },
+          y: { grid: { color: gridColor }, ticks: { callback: v => fmtEurCf(v) } }
+        }
+      }
+    });
+
+    // ── Top categorie uscite ──
+    const catUsc = {};
+    rows.filter(r => r.tipo !== 'Entrata').forEach(r => {
+      const v = parseFloat(String(r.costo).replace(',','.')) || 0;
+      catUsc[r.categoria] = (catUsc[r.categoria] || 0) + v;
+    });
+    const topUsc = Object.entries(catUsc).sort((a,b) => b[1]-a[1]).slice(0, 8);
+
+    if (cfChartBarUsc) cfChartBarUsc.destroy();
+    const oldBU = document.getElementById('cfChartBarUsc');
+    const ncBU = document.createElement('canvas'); ncBU.id = 'cfChartBarUsc';
+    oldBU.parentNode.replaceChild(ncBU, oldBU);
+
+    cfChartBarUsc = new Chart(ncBU, {
+      type: 'bar',
+      data: {
+        labels: topUsc.map(([k]) => k),
+        datasets: [{
+          label: 'Media mensile',
+          data: topUsc.map(([,v]) => v / nMesiStorici),
+          backgroundColor: 'rgba(255,59,59,0.55)', borderRadius: 6, borderSkipped: false
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, indexAxis: 'y',
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ' ' + fmtEurCf(ctx.parsed.x) } } },
+        scales: {
+          x: { grid: { color: gridColor }, ticks: { callback: v => fmtEurCf(v) } },
+          y: { grid: { color: gridColor } }
+        }
+      }
+    });
+
+    // ── Top categorie entrate ──
+    const catEnt = {};
+    rows.filter(r => r.tipo === 'Entrata').forEach(r => {
+      const v = parseFloat(String(r.costo).replace(',','.')) || 0;
+      catEnt[r.categoria] = (catEnt[r.categoria] || 0) + v;
+    });
+    const topEnt = Object.entries(catEnt).sort((a,b) => b[1]-a[1]).slice(0, 6);
+
+    if (cfChartBarEnt) cfChartBarEnt.destroy();
+    const oldBE = document.getElementById('cfChartBarEnt');
+    const ncBE = document.createElement('canvas'); ncBE.id = 'cfChartBarEnt';
+    oldBE.parentNode.replaceChild(ncBE, oldBE);
+
+    cfChartBarEnt = new Chart(ncBE, {
+      type: 'bar',
+      data: {
+        labels: topEnt.map(([k]) => k),
+        datasets: [{
+          label: 'Media mensile',
+          data: topEnt.map(([,v]) => v / nMesiStorici),
+          backgroundColor: 'rgba(46,204,113,0.55)', borderRadius: 6, borderSkipped: false
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, indexAxis: 'y',
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ' ' + fmtEurCf(ctx.parsed.x) } } },
+        scales: {
+          x: { grid: { color: gridColor }, ticks: { callback: v => fmtEurCf(v) } },
+          y: { grid: { color: gridColor } }
+        }
+      }
+    });
+
+    // ── Tabella dettaglio mensile ──
+    let html = `<thead><tr>
+      <th style="text-align:left">Mese</th>
+      <th style="text-align:right">Entrate</th>
+      <th style="text-align:right">Uscite</th>
+      <th style="text-align:right">Saldo</th>
+      <th style="text-align:right">Tipo</th>
+    </tr></thead><tbody>`;
+
+    MESI.forEach((label, i) => {
+      const e = entratePerMese[i];
+      const u = uscitePerMese[i];
+      const saldo = e - u;
+      const futuro = i > meseCorrente;
+      const preview = futuro;
+      const eFmt = preview ? fmtEurCf(mediaEntrate) : (e > 0 ? fmtEurCf(e) : '—');
+      const uFmt = preview ? fmtEurCf(mediaUscite)  : (u > 0 ? fmtEurCf(u)  : '—');
+      const saldoVal  = preview ? mediaSaldo : saldo;
+      const saldoFmt  = (e > 0 || u > 0 || preview) ? fmtEurCf(saldoVal) : '—';
+      const saldoClass = saldoVal >= 0 ? 'pos' : 'neg';
+      const opacity = futuro ? 'opacity:0.5;font-style:italic;' : '';
+      const tipoLabel = futuro ? '<span style="font-size:11px;color:var(--accent-blue);">previsione</span>' : (i === meseCorrente ? '<span style="font-size:11px;color:var(--accent-amber);">in corso</span>' : '');
+
+      html += `<tr style="${opacity}">
+        <td style="font-weight:600;">${label}</td>
+        <td style="text-align:right;color:var(--accent-green);font-family:'Space Mono',monospace;font-size:12px;">${eFmt}</td>
+        <td style="text-align:right;color:var(--accent-red);font-family:'Space Mono',monospace;font-size:12px;">${uFmt}</td>
+        <td style="text-align:right;font-family:'Space Mono',monospace;font-size:12px;" class="${(e>0||u>0||preview)?saldoClass:''}">${saldoFmt}</td>
+        <td style="text-align:right;">${tipoLabel}</td>
+      </tr>`;
+    });
+
+    // Riga totale
+    const totE = entratePerMese.reduce((s,v)=>s+v,0) + (mesiFuturi * mediaEntrate);
+    const totU = uscitePerMese.reduce((s,v)=>s+v,0)  + (mesiFuturi * mediaUscite);
+    const totS = totE - totU;
+    html += `<tr class="tot-row">
+      <td>Totale anno</td>
+      <td style="text-align:right;color:var(--accent-green);font-family:'Space Mono',monospace;font-size:12px;">${fmtEurCf(totE)}</td>
+      <td style="text-align:right;color:var(--accent-red);font-family:'Space Mono',monospace;font-size:12px;">${fmtEurCf(totU)}</td>
+      <td style="text-align:right;font-family:'Space Mono',monospace;font-size:12px;" class="${totS>=0?'pos':'neg'}">${fmtEurCf(totS)}</td>
+      <td></td>
+    </tr>`;
+    html += '</tbody>';
+    document.getElementById('cfTabella').innerHTML = html;
+  }
+
+  ['cfAnnoSelect','cfPaganteSelect'].forEach(id => {
+    document.getElementById(id).addEventListener('change', renderCashflow);
+  });
 
 
-  // ── Avvio app: carica tutto in una volta ──
+  // ── Avvio app ──
   initApp();
