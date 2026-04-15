@@ -6,7 +6,7 @@
   };
 
   // ─── Apps Script endpoint (JSONP — aggira CORS) ───────────────
-  const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbysjN2wGXA8Pn_MloHyw2pUcwzwcz4e4escZD4ggGUwPWeQeFEfnm_S3VoPB1P_DGfUQQ/exec';
+  const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzTAoxMWqQasZQn3qt7LDBB9Wh94Kw6KteBmT36qeWL8x9zEb_IcURBMOOjrsO8X8JpOA/exec';
 
   function asCall(params) {
     return new Promise((resolve, reject) => {
