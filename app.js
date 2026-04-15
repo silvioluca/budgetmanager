@@ -6,7 +6,7 @@
   };
 
   // ─── Apps Script endpoint (JSONP — aggira CORS) ───────────────
-  const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzTAoxMWqQasZQn3qt7LDBB9Wh94Kw6KteBmT36qeWL8x9zEb_IcURBMOOjrsO8X8JpOA/exec';
+  const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyX5V5-eyaFj4D1AmfjFo7xjnHqed6T6JaJ6koTmuPdnaonlKWpAefAaSlafwwwU0QyOA/exec';
 
   function asCall(params) {
     return new Promise((resolve, reject) => {
@@ -288,28 +288,52 @@
     return el;
   })();
 
-  async function initApp() {
+  const CACHE_KEY = 'bm_data_cache';
+  const CACHE_TTL = 5 * 60 * 1000; // 5 minuti
+
+  function saveCache(data) {
     try {
+      sessionStorage.setItem(CACHE_KEY, JSON.stringify({ ts: Date.now(), data }));
+    } catch(e) {}
+  }
+
+  function loadCache() {
+    try {
+      const raw = sessionStorage.getItem(CACHE_KEY);
+      if (!raw) return null;
+      const { ts, data } = JSON.parse(raw);
+      if (Date.now() - ts > CACHE_TTL) { sessionStorage.removeItem(CACHE_KEY); return null; }
+      return data;
+    } catch(e) { return null; }
+  }
+
+  function applyData(json) {
+    allRows  = json.rows  || [];
+    mAllRate = json.mutuo || [];
+    loadingBanner.remove();
+    const s = state.activeSection;
+    if (s === 'elenco')   { populateAnnoFilter(); applyFilters(); }
+    if (s === 'annuale')  renderDashAnnuale();
+    if (s === 'generale') renderDashGenerale();
+    if (s === 'tabelle')  renderTabelle();
+    if (s === 'utenze')   renderUtenze();
+    if (s === 'mutuo')    buildMutuo(mAllRate);
+    if (s === 'cashflow') renderCashflow();
+  }
+
+  async function initApp(forceRefresh = false) {
+    try {
+      // Usa cache se disponibile e non forzato refresh
+      if (!forceRefresh) {
+        const cached = loadCache();
+        if (cached) { applyData(cached); return; }
+      }
+
       const json = await asCall({ action: 'read_all' });
       if (json.status !== 'ok') throw new Error(json.message);
 
-      // Popola allRows (spese)
-      allRows = json.rows || [];
-
-      // Popola mAllRate (mutuo)
-      mAllRate = json.mutuo || [];
-
-      loadingBanner.remove();
-
-      // Se la sezione attiva ha bisogno di dati, renderizzala subito
-      const s = state.activeSection;
-      if (s === 'elenco')   { populateAnnoFilter(); applyFilters(); }
-      if (s === 'annuale')  renderDashAnnuale();
-      if (s === 'generale') renderDashGenerale();
-      if (s === 'tabelle')  renderTabelle();
-      if (s === 'utenze')   renderUtenze();
-      if (s === 'mutuo')    buildMutuo(mAllRate);
-      if (s === 'cashflow') renderCashflow();
+      saveCache(json);
+      applyData(json);
 
     } catch(e) {
       loadingBanner.innerHTML = `<span style="color:var(--accent-red);">⚠ Errore caricamento. Ricarica la pagina.</span>`;
@@ -531,7 +555,8 @@
   document.getElementById('btnReload').addEventListener('click', () => {
     allRows = [];
     mAllRate = [];
-    initApp().then(() => { populateAnnoFilter(); applyFilters(); });
+    sessionStorage.removeItem(CACHE_KEY);
+    initApp(true).then(() => { populateAnnoFilter(); applyFilters(); });
   });
 
   // ─── Dashboard Annuale ────────────────────────────────────────
