@@ -322,7 +322,7 @@
     if (s === 'mutuo')      buildMutuo(mAllRate);
     if (s === 'cashflow')   renderCashflow();
     if (s === 'patrimonio') renderPatrimonio();
-    if (s === 'calendario')  { renderCalendario(); initCalSlider(); }
+    if (s === 'calendario')  { renderCalendario(); }
   }
 
   async function initApp(forceRefresh = false) {
@@ -1535,7 +1535,7 @@
       if (s === 'mutuo')    { if (mAllRate.length) buildMutuo(mAllRate); }
       if (s === 'cashflow')   renderCashflow();
       if (s === 'patrimonio') renderPatrimonio();
-      if (s === 'calendario')  { renderCalendario(); initCalSlider(); }
+      if (s === 'calendario')  { renderCalendario(); }
     });
   });
 
@@ -2365,40 +2365,53 @@
       type: 'doughnut',
       data: { labels: donutLabels, datasets: [{ data: donutData, backgroundColor: donutColors, borderWidth: 2, borderColor: isDark ? '#1a1a1a' : '#fff' }]},
       options: {
-        responsive: true, maintainAspectRatio: false, cutout: '62%',
+        responsive: true, maintainAspectRatio: false, cutout: '60%',
         plugins: {
-          legend: { position:'right', labels:{ boxWidth:12, padding:14 }},
-          tooltip: { callbacks: { label: ctx => ' ' + fmtEur(ctx.parsed) + '  (' + (ctx.parsed/totAll*100).toFixed(1) + '%)' }},
-          // Percentuali sul donut
-          datalabels: false
+          legend: { display: false },
+          tooltip: { callbacks: { label: ctx => ' ' + fmtEur(ctx.parsed) + '  (' + (ctx.parsed/totAll*100).toFixed(1) + '%)' }}
         }
       },
       plugins: [{
-        id: 'donutLabels',
+        id: 'donutPct',
         afterDraw(chart) {
           const { ctx, data } = chart;
           const tot = data.datasets[0].data.reduce((s,v) => s+v, 0);
           chart.getDatasetMeta(0).data.forEach((arc, i) => {
             const val = data.datasets[0].data[i];
             const pct = (val/tot*100).toFixed(1);
-            if (parseFloat(pct) < 3) return; // nascondi label troppo piccole
-            const angle    = (arc.startAngle + arc.endAngle) / 2;
-            const r        = (arc.innerRadius + arc.outerRadius) / 2;
-            const x        = arc.x + Math.cos(angle) * r;
-            const y        = arc.y + Math.sin(angle) * r;
+            if (parseFloat(pct) < 4) return;
+            const angle = (arc.startAngle + arc.endAngle) / 2;
+            const r     = (arc.innerRadius + arc.outerRadius) / 2;
+            const x     = arc.x + Math.cos(angle) * r;
+            const y     = arc.y + Math.sin(angle) * r;
             ctx.save();
-            ctx.fillStyle    = '#fff';
-            ctx.font         = 'bold 11px DM Sans';
-            ctx.textAlign    = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.shadowColor  = 'rgba(0,0,0,0.4)';
-            ctx.shadowBlur   = 3;
+            ctx.fillStyle = '#fff'; ctx.font = 'bold 11px DM Sans';
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.shadowColor = 'rgba(0,0,0,0.5)'; ctx.shadowBlur = 3;
             ctx.fillText(pct + '%', x, y);
             ctx.restore();
           });
         }
       }]
     });
+
+    // Legenda custom a lato (sostituisce quella nativa)
+    const legEl = document.getElementById('patDonutLegend');
+    if (legEl) {
+      let legHtml = '<div style="display:flex;flex-direction:column;gap:8px;">';
+      rows.forEach((r, i) => {
+        const pct = (r.valore / totAll * 100).toFixed(1);
+        const isAtt = r.tipologia.toLowerCase().includes('attiv');
+        legHtml += `<div style="display:flex;align-items:center;gap:8px;font-size:12px;">
+          <div style="width:10px;height:10px;border-radius:50%;background:${donutColors[i]};flex-shrink:0;"></div>
+          <span style="color:var(--text-secondary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${r.asset}">${r.asset}</span>
+          <span style="font-family:'Space Mono',monospace;font-size:11px;color:${isAtt?'var(--accent-green)':'var(--accent-red)'};white-space:nowrap;">${pct}%</span>
+          <span style="font-family:'Space Mono',monospace;font-size:11px;color:var(--text-secondary);white-space:nowrap;">${fmtEur(r.valore)}</span>
+        </div>`;
+      });
+      legHtml += '</div>';
+      legEl.innerHTML = legHtml;
+    }
 
     // Tabelle
     const buildTable = (arr, colorClass) => {
@@ -2425,11 +2438,14 @@
   let calYear  = new Date().getFullYear();
   let calMonth = new Date().getMonth(); // 0-indexed
   let calChartLine = null;
+  let calMinMs = 0, calMaxMs = 0;
   let calRangeStart = null, calRangeEnd = null;
 
   function renderCalendario() {
     if (!allRows.length) return;
     renderCalGrid();
+    renderHeatmap();
+    initCalSlider();
     renderCalChart();
   }
 
@@ -2528,33 +2544,30 @@
   function renderCalChart() {
     if (!allRows.length) return;
 
-    const fmtEur = v => v.toLocaleString('it-IT', { style:'currency', currency:'EUR', maximumFractionDigits:0 });
+    const fmtEur    = v => v.toLocaleString('it-IT', { style:'currency', currency:'EUR', maximumFractionDigits:0 });
     const isDark    = document.documentElement.getAttribute('data-theme') !== 'light';
     const gridColor = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
     Chart.defaults.color = isDark ? '#888' : '#666';
     Chart.defaults.font.family = 'DM Sans';
 
-    // Range: usa slider o default (ultimi 12 mesi)
-    const now = new Date();
-    const defaultEnd   = new Date(now.getFullYear(), now.getMonth(), 1);
-    const defaultStart = new Date(defaultEnd); defaultStart.setMonth(defaultStart.getMonth() - 11);
+    const rangeStart = calRangeStart;
+    const rangeEnd   = calRangeEnd;
+    if (!rangeStart || !rangeEnd) return;
 
-    const rangeStart = calRangeStart || defaultStart;
-    const rangeEnd   = calRangeEnd   || defaultEnd;
-
-    // Genera lista mesi nel range
+    const MESI_SHORT = ['Gen','Feb','Mar','Apr','Mag','Giu','Lug','Ago','Set','Ott','Nov','Dic'];
     const labels = [], dataEnt = [], dataUsc = [];
-    const cur = new Date(rangeStart);
-    while (cur <= rangeEnd) {
+    const cur = new Date(rangeStart.getFullYear(), rangeStart.getMonth(), 1);
+    const end = new Date(rangeEnd.getFullYear(),   rangeEnd.getMonth(),   1);
+    while (cur <= end) {
       const y = cur.getFullYear(), m = cur.getMonth();
-      labels.push(`${['Gen','Feb','Mar','Apr','Mag','Giu','Lug','Ago','Set','Ott','Nov','Dic'][m]} ${y}`);
+      labels.push(`${MESI_SHORT[m]} ${y}`);
       const mRows = allRows.filter(r => {
         if (!r.data) return false;
         const d = new Date(r.data);
         return d.getFullYear() === y && d.getMonth() === m;
       });
       dataEnt.push(mRows.filter(r => r.tipo === 'Entrate').reduce((s,r) => s + (parseFloat(String(r.costo).replace(',','.')) || 0), 0));
-      dataUsc.push(mRows.filter(r => r.tipo === 'Uscite').reduce((s,r) => s + (parseFloat(String(r.costo).replace(',','.')) || 0), 0));
+      dataUsc.push(mRows.filter(r => r.tipo === 'Uscite').reduce((s,r)  => s + (parseFloat(String(r.costo).replace(',','.')) || 0), 0));
       cur.setMonth(cur.getMonth() + 1);
     }
 
@@ -2566,42 +2579,189 @@
     calChartLine = new Chart(nL, {
       type: 'line',
       data: { labels, datasets: [
-        { label:'Entrate', data:dataEnt, borderColor:'#2ecc71', backgroundColor:'rgba(46,204,113,0.08)', borderWidth:2, pointRadius:3, fill:true, tension:0.3 },
-        { label:'Uscite',  data:dataUsc, borderColor:'#ff3b3b', backgroundColor:'rgba(255,59,59,0.08)',  borderWidth:2, pointRadius:3, fill:true, tension:0.3 },
+        { label:'Entrate', data:dataEnt, borderColor:'#2ecc71', backgroundColor:'rgba(46,204,113,0.1)', borderWidth:2, pointRadius:3, fill:true, tension:0.3 },
+        { label:'Uscite',  data:dataUsc, borderColor:'#ff3b3b', backgroundColor:'rgba(255,59,59,0.1)',  borderWidth:2, pointRadius:3, fill:true, tension:0.3 },
       ]},
       options: {
         responsive:true, maintainAspectRatio:false,
-        plugins: { legend:{ position:'bottom', labels:{ boxWidth:12, padding:16 }}, tooltip:{ callbacks:{ label: ctx => ' ' + fmtEur(ctx.parsed.y) }}},
-        scales: { x:{ grid:{color:gridColor}}, y:{ grid:{color:gridColor}, ticks:{ callback: v => fmtEur(v) }}}
+        plugins: { legend:{ position:'bottom', labels:{ boxWidth:12, padding:16 }},
+          tooltip:{ callbacks:{ label: ctx => ' ' + fmtEur(ctx.parsed.y) }}},
+        scales: { x:{ grid:{color:gridColor}, ticks:{ maxTicksLimit:12 }},
+          y:{ grid:{color:gridColor}, ticks:{ callback: v => fmtEur(v) }}}
       }
     });
 
     // Aggiorna label range
-    const fmt = d => `${d.getDate()}/${d.getMonth()+1}/${d.getFullYear()}`;
+    const fmt = d => `${MESI_SHORT[d.getMonth()]} ${d.getFullYear()}`;
     document.getElementById('calRangeLabel').textContent = fmt(rangeStart) + ' — ' + fmt(rangeEnd);
   }
 
-  // Slider range date (usa timestamp ms, convertito in mesi)
+  function renderHeatmap() {
+    const container = document.getElementById('calHeatmap');
+    if (!container || !allRows.length) return;
+
+    // Aggrega spese totali per giorno
+    const spesaPerGiorno = {};
+    allRows.filter(r => r.tipo === 'Uscite' && r.data).forEach(r => {
+      const v = parseFloat(String(r.costo).replace(',','.')) || 0;
+      spesaPerGiorno[r.data] = (spesaPerGiorno[r.data] || 0) + v;
+    });
+
+    const valori = Object.values(spesaPerGiorno);
+    const maxVal = valori.length ? Math.max(...valori) : 1;
+
+    // Genera ultimi 52 settimane (364 giorni) come GitHub
+    const oggi = new Date();
+    oggi.setHours(0,0,0,0);
+    const startDate = new Date(oggi);
+    startDate.setDate(startDate.getDate() - 363);
+    // Allinea a lunedì
+    while (startDate.getDay() !== 1) startDate.setDate(startDate.getDate() - 1);
+
+    const fmtDate = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    const fmtEur  = v => v.toLocaleString('it-IT', { style:'currency', currency:'EUR', maximumFractionDigits:0 });
+
+    // Settimane come colonne, giorni (lun-dom) come righe
+    const weeks = [];
+    const cur = new Date(startDate);
+    while (cur <= oggi) {
+      const week = [];
+      for (let d = 0; d < 7; d++) {
+        const key = fmtDate(cur);
+        const val = spesaPerGiorno[key] || 0;
+        week.push({ date: key, val, isFuture: cur > oggi });
+        cur.setDate(cur.getDate() + 1);
+      }
+      weeks.push(week);
+    }
+
+    // Intensità colore: 0=trasparente, max=rosso pieno
+    const getColor = val => {
+      if (!val) return 'var(--bg3)';
+      const t = Math.min(val / maxVal, 1);
+      // da verde chiaro a rosso intenso
+      const r = Math.round(80  + t * 175);
+      const g = Math.round(180 - t * 150);
+      const b = Math.round(80  - t * 50);
+      return `rgb(${r},${g},${b})`;
+    };
+
+    const MESI = ['Gen','Feb','Mar','Apr','Mag','Giu','Lug','Ago','Set','Ott','Nov','Dic'];
+    const GIORNI = ['L','M','M','G','V','S','D'];
+
+    // Label mesi sopra
+    let monthLabels = '<div style="display:flex;gap:3px;margin-bottom:3px;padding-left:20px;">';
+    let lastMonth = -1;
+    weeks.forEach((week, wi) => {
+      const m = new Date(week[0].date).getMonth();
+      if (m !== lastMonth) {
+        monthLabels += `<div style="width:14px;font-size:9px;color:var(--text-hint);white-space:nowrap;">${MESI[m]}</div>`;
+        lastMonth = m;
+      } else {
+        monthLabels += '<div style="width:14px;"></div>';
+      }
+    });
+    monthLabels += '</div>';
+
+    // Griglia: giorni sull'asse Y, settimane su X
+    let grid = '<div style="display:flex;gap:2px;">';
+    // Label giorni
+    grid += '<div style="display:flex;flex-direction:column;gap:3px;margin-right:4px;">';
+    GIORNI.forEach(g => grid += `<div style="height:14px;font-size:9px;color:var(--text-hint);line-height:14px;">${g}</div>`);
+    grid += '</div>';
+
+    weeks.forEach(week => {
+      grid += '<div style="display:flex;flex-direction:column;gap:3px;">';
+      week.forEach(({ date, val, isFuture }) => {
+        const color = isFuture ? 'transparent' : getColor(val);
+        const tip   = val > 0 ? `${date}: ${fmtEur(val)}` : date;
+        grid += `<div title="${tip}" style="width:14px;height:14px;border-radius:3px;background:${color};cursor:${val>0?'pointer':'default'}"
+          ${val > 0 ? `onclick="calDayClick(${new Date(date).getDate()}); calYear=${new Date(date).getFullYear()}; calMonth=${new Date(date).getMonth()};"` : ''}></div>`;
+      });
+      grid += '</div>';
+    });
+    grid += '</div>';
+
+    // Legenda
+    const legend = `<div style="display:flex;align-items:center;gap:6px;margin-top:10px;font-size:11px;color:var(--text-secondary);">
+      <span>Meno</span>
+      ${[0, 0.25, 0.5, 0.75, 1].map(t => `<div style="width:14px;height:14px;border-radius:3px;background:${t===0?'var(--bg3)':`rgb(${Math.round(80+t*175)},${Math.round(180-t*150)},${Math.round(80-t*50)})`}"></div>`).join('')}
+      <span>Di più</span>
+    </div>`;
+
+    container.innerHTML = monthLabels + grid + legend;
+  }
+
+  // Dual-handle slider
   function initCalSlider() {
-    const slider = document.getElementById('calRangeSlider');
-    if (!slider || slider.dataset.init) return;
-    slider.dataset.init = '1';
+    const thumbL = document.getElementById('calThumbL');
+    const thumbR = document.getElementById('calThumbR');
+    const track  = document.getElementById('calTrackFill');
+    const wrap   = document.getElementById('calSliderWrap');
+    if (!thumbL || thumbL.dataset.init) return;
+    thumbL.dataset.init = '1';
 
     const allDates = allRows.map(r => r.data ? new Date(r.data).getTime() : null).filter(Boolean);
     if (!allDates.length) return;
 
-    const minMs = Math.min(...allDates);
-    const maxMs = Date.now();
-    slider.min   = minMs;
-    slider.max   = maxMs;
-    slider.value = maxMs;
+    calMinMs = Math.min(...allDates);
+    calMaxMs = Date.now();
 
-    slider.addEventListener('input', () => {
-      const val = parseInt(slider.value);
-      calRangeEnd   = new Date(val);
-      calRangeStart = new Date(val); calRangeStart.setMonth(calRangeStart.getMonth() - 11);
+    let posL = 0, posR = 1; // 0..1
+
+    function msToPos(ms) { return (ms - calMinMs) / (calMaxMs - calMinMs); }
+    function posToMs(p)   { return calMinMs + p * (calMaxMs - calMinMs); }
+    function posToDate(p) { const ms = posToMs(p); const d = new Date(ms); d.setDate(1); return d; }
+
+    function updateFromPos() {
+      calRangeStart = posToDate(posL);
+      calRangeEnd   = posToDate(posR);
+      const pctL = (posL * 100).toFixed(1) + '%';
+      const pctR = (posR * 100).toFixed(1) + '%';
+      thumbL.style.left = pctL;
+      thumbR.style.left = pctR;
+      track.style.left  = pctL;
+      track.style.width = ((posR - posL) * 100).toFixed(1) + '%';
       renderCalChart();
-    });
+    }
+
+    // Imposta defaults: tutto il range
+    posL = 0; posR = 1;
+    updateFromPos();
+
+    function makeDraggable(thumb, isLeft) {
+      thumb.addEventListener('mousedown', e => {
+        e.preventDefault();
+        const rect = wrap.getBoundingClientRect();
+        function onMove(ev) {
+          const p = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
+          if (isLeft)  { posL = Math.min(p, posR - 0.01); }
+          else         { posR = Math.max(p, posL + 0.01); }
+          updateFromPos();
+        }
+        function onUp() { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); }
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+      });
+      // Touch
+      thumb.addEventListener('touchstart', e => {
+        e.preventDefault();
+        const rect = wrap.getBoundingClientRect();
+        function onMove(ev) {
+          const touch = ev.touches[0];
+          const p = Math.max(0, Math.min(1, (touch.clientX - rect.left) / rect.width));
+          if (isLeft)  { posL = Math.min(p, posR - 0.01); }
+          else         { posR = Math.max(p, posL + 0.01); }
+          updateFromPos();
+        }
+        function onUp() { thumb.removeEventListener('touchmove', onMove); thumb.removeEventListener('touchend', onUp); }
+        thumb.addEventListener('touchmove', onMove, { passive: false });
+        thumb.addEventListener('touchend', onUp);
+      });
+    }
+
+    makeDraggable(thumbL, true);
+    makeDraggable(thumbR, false);
   }
 
   // ── Nav mese calendario ──
