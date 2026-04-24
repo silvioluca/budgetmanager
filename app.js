@@ -6,7 +6,7 @@
   };
 
   // ─── Apps Script endpoint (JSONP — aggira CORS) ───────────────
-  const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxWZe56GaUvyMI2HR4XUTxZuE9glfp2fPR34czYq5_-38DohWEyYcFjfl0cI0_5x9i7dg/exec';
+  const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyEUsipvNPc7dEXWCMYntN-hcQeBuBCnEYTbNagF3Xeg1gfU_jHYcRilxZseSxvoi32Eg/exec';
 
   function asCall(params) {
     return new Promise((resolve, reject) => {
@@ -322,6 +322,7 @@
     if (s === 'mutuo')      buildMutuo(mAllRate);
     if (s === 'cashflow')   renderCashflow();
     if (s === 'patrimonio') renderPatrimonio();
+    if (s === 'calendario')  { renderCalendario(); initCalSlider(); }
   }
 
   async function initApp(forceRefresh = false) {
@@ -1534,6 +1535,7 @@
       if (s === 'mutuo')    { if (mAllRate.length) buildMutuo(mAllRate); }
       if (s === 'cashflow')   renderCashflow();
       if (s === 'patrimonio') renderPatrimonio();
+      if (s === 'calendario')  { renderCalendario(); initCalSlider(); }
     });
   });
 
@@ -2139,7 +2141,7 @@
       const m = parseInt(r.mese) - 1;
       if (m < 0 || m > 11) return;
       const v = parseFloat(String(r.costo).replace(',','.')) || 0;
-      if (r.tipo === 'Entrata') entratePerMese[m] += v;
+      if (r.tipo === 'Entrate') entratePerMese[m] += v;
       else uscitePerMese[m] += v;
     });
 
@@ -2159,7 +2161,7 @@
 
     // ── Top 5 categorie uscite ──
     const catUsc = {};
-    rowsAnno.filter(r => r.tipo !== 'Entrata').forEach(r => {
+    rowsAnno.filter(r => r.tipo !== 'Entrate').forEach(r => {
       const v = parseFloat(String(r.costo).replace(',','.')) || 0;
       catUsc[r.categoria] = (catUsc[r.categoria] || 0) + v;
     });
@@ -2169,7 +2171,7 @@
 
     // ── Top 5 categorie entrate ──
     const catEnt = {};
-    rowsAnno.filter(r => r.tipo === 'Entrata').forEach(r => {
+    rowsAnno.filter(r => r.tipo === 'Entrate').forEach(r => {
       const v = parseFloat(String(r.costo).replace(',','.')) || 0;
       catEnt[r.categoria] = (catEnt[r.categoria] || 0) + v;
     });
@@ -2317,27 +2319,23 @@
 
 
   // ─── Sezione Patrimonio ───────────────────────────────────────
-  let patChartDonut = null, patChartBar = null;
+  let patChartDonut = null;
 
   function renderPatrimonio() {
     const rows = patrimonioRows;
+    const fmtEur = v => v.toLocaleString('it-IT', { style:'currency', currency:'EUR', maximumFractionDigits:0 });
+
     if (!rows.length) {
-      document.getElementById('patKpiAttivi').textContent  = '—';
-      document.getElementById('patKpiPassivi').textContent = '—';
-      document.getElementById('patKpiNetto').textContent   = '—';
+      ['patKpiAttivi','patKpiPassivi','patKpiNetto'].forEach(id => document.getElementById(id).textContent = '—');
       return;
     }
 
-    const fmtEur = v => v.toLocaleString('it-IT', { style:'currency', currency:'EUR', maximumFractionDigits:0 });
-
     const attivi  = rows.filter(r => r.tipologia.toLowerCase().includes('attiv'));
     const passivi = rows.filter(r => r.tipologia.toLowerCase().includes('passiv'));
-
     const totAttivi  = attivi.reduce((s,r)  => s + r.valore, 0);
     const totPassivi = passivi.reduce((s,r) => s + r.valore, 0);
     const netto      = totAttivi - totPassivi;
 
-    // KPI
     document.getElementById('patKpiAttivi').textContent  = fmtEur(totAttivi);
     document.getElementById('patKpiPassivi').textContent = fmtEur(totPassivi);
     const nettoEl = document.getElementById('patKpiNetto');
@@ -2345,7 +2343,6 @@
     nettoEl.className   = 'kpi-value ' + (netto >= 0 ? 'kpi-green' : 'kpi-red');
 
     const isDark    = document.documentElement.getAttribute('data-theme') !== 'light';
-    const gridColor = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
     const textColor = isDark ? '#888' : '#666';
     Chart.defaults.color       = textColor;
     Chart.defaults.font.family = 'DM Sans';
@@ -2354,48 +2351,59 @@
     const COLORS_ACT = ['#5b9bff','#2ecc71','#f39c12','#9b59b6','#1abc9c','#e67e22','#3498db','#27ae60'];
     const COLORS_PAS = ['#ff3b3b','#e74c3c','#c0392b','#ff6b6b'];
 
-    // Donut: tutti gli asset colorati per tipo
     const donutLabels = rows.map(r => r.asset);
     const donutData   = rows.map(r => r.valore);
     const donutColors = rows.map((r,i) => r.tipologia.toLowerCase().includes('attiv') ? COLORS_ACT[i % COLORS_ACT.length] : COLORS_PAS[i % COLORS_PAS.length]);
+    const totAll      = donutData.reduce((s,v) => s+v, 0);
 
     if (patChartDonut) patChartDonut.destroy();
     const cD = document.getElementById('patChartDonut');
     const nD = document.createElement('canvas'); nD.id = 'patChartDonut';
     cD.parentNode.replaceChild(nD, cD);
+
     patChartDonut = new Chart(nD, {
       type: 'doughnut',
       data: { labels: donutLabels, datasets: [{ data: donutData, backgroundColor: donutColors, borderWidth: 2, borderColor: isDark ? '#1a1a1a' : '#fff' }]},
-      options: { responsive:true, maintainAspectRatio:false, cutout:'62%',
-        plugins: { legend:{ position:'right', labels:{ boxWidth:12, padding:14 }}, tooltip:{ callbacks:{ label: ctx => ' ' + fmtEur(ctx.parsed) }}}
-      }
+      options: {
+        responsive: true, maintainAspectRatio: false, cutout: '62%',
+        plugins: {
+          legend: { position:'right', labels:{ boxWidth:12, padding:14 }},
+          tooltip: { callbacks: { label: ctx => ' ' + fmtEur(ctx.parsed) + '  (' + (ctx.parsed/totAll*100).toFixed(1) + '%)' }},
+          // Percentuali sul donut
+          datalabels: false
+        }
+      },
+      plugins: [{
+        id: 'donutLabels',
+        afterDraw(chart) {
+          const { ctx, data } = chart;
+          const tot = data.datasets[0].data.reduce((s,v) => s+v, 0);
+          chart.getDatasetMeta(0).data.forEach((arc, i) => {
+            const val = data.datasets[0].data[i];
+            const pct = (val/tot*100).toFixed(1);
+            if (parseFloat(pct) < 3) return; // nascondi label troppo piccole
+            const angle    = (arc.startAngle + arc.endAngle) / 2;
+            const r        = (arc.innerRadius + arc.outerRadius) / 2;
+            const x        = arc.x + Math.cos(angle) * r;
+            const y        = arc.y + Math.sin(angle) * r;
+            ctx.save();
+            ctx.fillStyle    = '#fff';
+            ctx.font         = 'bold 11px DM Sans';
+            ctx.textAlign    = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.shadowColor  = 'rgba(0,0,0,0.4)';
+            ctx.shadowBlur   = 3;
+            ctx.fillText(pct + '%', x, y);
+            ctx.restore();
+          });
+        }
+      }]
     });
 
-    // Barre: attivi e passivi per asset
-    if (patChartBar) patChartBar.destroy();
-    const allAssets   = rows.map(r => r.asset);
-    const attiviMap   = Object.fromEntries(attivi.map(r  => [r.asset, r.valore]));
-    const passiviMap  = Object.fromEntries(passivi.map(r => [r.asset, r.valore]));
-
-    const cB = document.getElementById('patChartBar');
-    const nB = document.createElement('canvas'); nB.id = 'patChartBar';
-    cB.parentNode.replaceChild(nB, cB);
-    patChartBar = new Chart(nB, {
-      type:'bar',
-      data:{ labels: allAssets, datasets:[
-        { label:'Attivo',  data: allAssets.map(a => attiviMap[a]  || 0), backgroundColor:'rgba(46,204,113,0.7)',  borderRadius:5, borderSkipped:false },
-        { label:'Passivo', data: allAssets.map(a => passiviMap[a] || 0), backgroundColor:'rgba(255,59,59,0.7)',   borderRadius:5, borderSkipped:false },
-      ]},
-      options:{ responsive:true, maintainAspectRatio:false, indexAxis:'y',
-        plugins:{ legend:{ position:'bottom', labels:{ boxWidth:10, padding:12 }}, tooltip:{ callbacks:{ label: ctx => ' ' + fmtEur(ctx.parsed.x) }}},
-        scales:{ x:{ grid:{color:gridColor}, ticks:{ callback: v => fmtEur(v) }}, y:{ grid:{color:gridColor} }}
-      }
-    });
-
-    // Tabella attivi
+    // Tabelle
     const buildTable = (arr, colorClass) => {
       const tot = arr.reduce((s,r) => s+r.valore, 0);
-      let h = `<thead><tr><th style="text-align:left">Asset</th><th style="text-align:right">Valore</th><th style="text-align:right">% sul totale</th></tr></thead><tbody>`;
+      let h = `<thead><tr><th style="text-align:left">Asset</th><th style="text-align:right">Valore</th><th style="text-align:right">%</th></tr></thead><tbody>`;
       arr.sort((a,b) => b.valore-a.valore).forEach(r => {
         const pct = tot > 0 ? (r.valore/tot*100).toFixed(1) : '0.0';
         h += `<tr>
@@ -2411,6 +2419,200 @@
     document.getElementById('patTabellaAttivi').innerHTML  = buildTable(attivi,  'pos');
     document.getElementById('patTabellaPassivi').innerHTML = buildTable(passivi, 'neg');
   }
+
+
+  // ─── Sezione Calendario ───────────────────────────────────────
+  let calYear  = new Date().getFullYear();
+  let calMonth = new Date().getMonth(); // 0-indexed
+  let calChartLine = null;
+  let calRangeStart = null, calRangeEnd = null;
+
+  function renderCalendario() {
+    if (!allRows.length) return;
+    renderCalGrid();
+    renderCalChart();
+  }
+
+  function renderCalGrid() {
+    const fmtEur = v => v.toLocaleString('it-IT', { style:'currency', currency:'EUR', maximumFractionDigits:0 });
+
+    // Aggiorna header mese
+    const mesi = ['Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno','Luglio','Agosto','Settembre','Ottobre','Novembre','Dicembre'];
+    document.getElementById('calMonthLabel').textContent = mesi[calMonth] + ' ' + calYear;
+
+    // Spese del mese
+    const speseDelMese = {};
+    allRows.forEach(r => {
+      if (!r.data) return;
+      const d = new Date(r.data);
+      if (d.getFullYear() === calYear && d.getMonth() === calMonth) {
+        const day = d.getDate();
+        if (!speseDelMese[day]) speseDelMese[day] = [];
+        speseDelMese[day].push(r);
+      }
+    });
+
+    // Costruisci griglia
+    const firstDay = new Date(calYear, calMonth, 1).getDay(); // 0=dom
+    const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
+    const startOffset = (firstDay === 0) ? 6 : firstDay - 1; // lun=0
+
+    let html = '';
+    // Intestazioni giorni
+    ['Lun','Mar','Mer','Gio','Ven','Sab','Dom'].forEach(g => {
+      html += `<div style="text-align:center;font-size:11px;font-weight:600;color:var(--text-hint);padding:4px 0;">${g}</div>`;
+    });
+
+    // Celle vuote iniziali
+    for (let i = 0; i < startOffset; i++) html += '<div></div>';
+
+    // Giorni
+    const oggi = new Date();
+    for (let d = 1; d <= daysInMonth; d++) {
+      const spese = speseDelMese[d] || [];
+      const totUsc = spese.filter(r => r.tipo === 'Uscite').reduce((s,r) => s + (parseFloat(String(r.costo).replace(',','.')) || 0), 0);
+      const totEnt = spese.filter(r => r.tipo === 'Entrate').reduce((s,r) => s + (parseFloat(String(r.costo).replace(',','.')) || 0), 0);
+      const isOggi = oggi.getDate()===d && oggi.getMonth()===calMonth && oggi.getFullYear()===calYear;
+
+      let dotHtml = '';
+      if (totEnt > 0) dotHtml += `<span style="font-size:9px;color:var(--accent-green)">▲${fmtEur(totEnt)}</span> `;
+      if (totUsc > 0) dotHtml += `<span style="font-size:9px;color:var(--accent-red)">▼${fmtEur(totUsc)}</span>`;
+
+      html += `<div class="cal-day${isOggi?' cal-today':''}" onclick="calDayClick(${d})" style="cursor:pointer">
+        <div style="font-size:12px;font-weight:${isOggi?'700':'500'};margin-bottom:2px">${d}</div>
+        <div style="line-height:1.3">${dotHtml}</div>
+      </div>`;
+    }
+
+    document.getElementById('calGrid').innerHTML = html;
+  }
+
+  window.calDayClick = function(day) {
+    const date = `${calYear}-${String(calMonth+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+    const spese = allRows.filter(r => r.data === date);
+
+    let html = `<div style="font-weight:600;margin-bottom:12px;font-size:14px">${day}/${calMonth+1}/${calYear}</div>`;
+
+    if (spese.length) {
+      html += `<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px">`;
+      spese.forEach(r => {
+        const v = parseFloat(String(r.costo).replace(',','.')) || 0;
+        const col = r.tipo === 'Entrate' ? 'var(--accent-green)' : 'var(--accent-red)';
+        html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:var(--bg1);border-radius:8px;font-size:13px">
+          <span>${r.descrizione || r.categoria}</span>
+          <span style="color:${col};font-family:'Space Mono',monospace;font-size:12px">${v.toLocaleString('it-IT',{style:'currency',currency:'EUR'})}</span>
+        </div>`;
+      });
+      html += '</div>';
+    } else {
+      html += `<div style="color:var(--text-secondary);font-size:13px;margin-bottom:14px">Nessuna spesa registrata.</div>`;
+    }
+
+    html += `<button class="btn-primary" style="width:100%" onclick="calOpenInsert('${date}')">+ Nuova spesa</button>`;
+    document.getElementById('calPopupBody').innerHTML = html;
+
+    const popup = document.getElementById('calPopup');
+    popup.style.display = 'flex';
+  };
+
+  window.calOpenInsert = function(date) {
+    document.getElementById('calPopup').style.display = 'none';
+    // Apri il form inserimento con data precompilata
+    document.querySelector('[data-section="inserimento"]').click();
+    setTimeout(() => {
+      const inp = document.getElementById('inpData');
+      if (inp) { inp.value = date; inp.dispatchEvent(new Event('change')); }
+    }, 150);
+  };
+
+  function renderCalChart() {
+    if (!allRows.length) return;
+
+    const fmtEur = v => v.toLocaleString('it-IT', { style:'currency', currency:'EUR', maximumFractionDigits:0 });
+    const isDark    = document.documentElement.getAttribute('data-theme') !== 'light';
+    const gridColor = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
+    Chart.defaults.color = isDark ? '#888' : '#666';
+    Chart.defaults.font.family = 'DM Sans';
+
+    // Range: usa slider o default (ultimi 12 mesi)
+    const now = new Date();
+    const defaultEnd   = new Date(now.getFullYear(), now.getMonth(), 1);
+    const defaultStart = new Date(defaultEnd); defaultStart.setMonth(defaultStart.getMonth() - 11);
+
+    const rangeStart = calRangeStart || defaultStart;
+    const rangeEnd   = calRangeEnd   || defaultEnd;
+
+    // Genera lista mesi nel range
+    const labels = [], dataEnt = [], dataUsc = [];
+    const cur = new Date(rangeStart);
+    while (cur <= rangeEnd) {
+      const y = cur.getFullYear(), m = cur.getMonth();
+      labels.push(`${['Gen','Feb','Mar','Apr','Mag','Giu','Lug','Ago','Set','Ott','Nov','Dic'][m]} ${y}`);
+      const mRows = allRows.filter(r => {
+        if (!r.data) return false;
+        const d = new Date(r.data);
+        return d.getFullYear() === y && d.getMonth() === m;
+      });
+      dataEnt.push(mRows.filter(r => r.tipo === 'Entrate').reduce((s,r) => s + (parseFloat(String(r.costo).replace(',','.')) || 0), 0));
+      dataUsc.push(mRows.filter(r => r.tipo === 'Uscite').reduce((s,r) => s + (parseFloat(String(r.costo).replace(',','.')) || 0), 0));
+      cur.setMonth(cur.getMonth() + 1);
+    }
+
+    if (calChartLine) calChartLine.destroy();
+    const cL = document.getElementById('calChartLine');
+    const nL = document.createElement('canvas'); nL.id = 'calChartLine';
+    cL.parentNode.replaceChild(nL, cL);
+
+    calChartLine = new Chart(nL, {
+      type: 'line',
+      data: { labels, datasets: [
+        { label:'Entrate', data:dataEnt, borderColor:'#2ecc71', backgroundColor:'rgba(46,204,113,0.08)', borderWidth:2, pointRadius:3, fill:true, tension:0.3 },
+        { label:'Uscite',  data:dataUsc, borderColor:'#ff3b3b', backgroundColor:'rgba(255,59,59,0.08)',  borderWidth:2, pointRadius:3, fill:true, tension:0.3 },
+      ]},
+      options: {
+        responsive:true, maintainAspectRatio:false,
+        plugins: { legend:{ position:'bottom', labels:{ boxWidth:12, padding:16 }}, tooltip:{ callbacks:{ label: ctx => ' ' + fmtEur(ctx.parsed.y) }}},
+        scales: { x:{ grid:{color:gridColor}}, y:{ grid:{color:gridColor}, ticks:{ callback: v => fmtEur(v) }}}
+      }
+    });
+
+    // Aggiorna label range
+    const fmt = d => `${d.getDate()}/${d.getMonth()+1}/${d.getFullYear()}`;
+    document.getElementById('calRangeLabel').textContent = fmt(rangeStart) + ' — ' + fmt(rangeEnd);
+  }
+
+  // Slider range date (usa timestamp ms, convertito in mesi)
+  function initCalSlider() {
+    const slider = document.getElementById('calRangeSlider');
+    if (!slider || slider.dataset.init) return;
+    slider.dataset.init = '1';
+
+    const allDates = allRows.map(r => r.data ? new Date(r.data).getTime() : null).filter(Boolean);
+    if (!allDates.length) return;
+
+    const minMs = Math.min(...allDates);
+    const maxMs = Date.now();
+    slider.min   = minMs;
+    slider.max   = maxMs;
+    slider.value = maxMs;
+
+    slider.addEventListener('input', () => {
+      const val = parseInt(slider.value);
+      calRangeEnd   = new Date(val);
+      calRangeStart = new Date(val); calRangeStart.setMonth(calRangeStart.getMonth() - 11);
+      renderCalChart();
+    });
+  }
+
+  // ── Nav mese calendario ──
+  document.getElementById('calPrevMonth').addEventListener('click', () => {
+    calMonth--; if (calMonth < 0) { calMonth = 11; calYear--; }
+    renderCalGrid();
+  });
+  document.getElementById('calNextMonth').addEventListener('click', () => {
+    calMonth++; if (calMonth > 11) { calMonth = 0; calYear++; }
+    renderCalGrid();
+  });
 
   // ── Avvio app ──
   initApp();
