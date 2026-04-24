@@ -65,6 +65,19 @@
       Elenco spese
     </div>
 
+    <div class="nav-item" data-section="calendario">
+      <svg class="nav-icon" viewBox="0 0 18 18" fill="none">
+        <rect x="2" y="4" width="14" height="12" rx="2" stroke="currentColor" stroke-width="1.4"/>
+        <line x1="6"  y1="2" x2="6"  y2="6"  stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+        <line x1="12" y1="2" x2="12" y2="6"  stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+        <line x1="2"  y1="8" x2="16" y2="8"  stroke="currentColor" stroke-width="1.4"/>
+        <circle cx="6"  cy="12" r="1" fill="currentColor"/>
+        <circle cx="9"  cy="12" r="1" fill="currentColor"/>
+        <circle cx="12" cy="12" r="1" fill="currentColor"/>
+      </svg>
+      Calendario
+    </div>
+
     <div class="sidebar-section-label">Analisi</div>
 
     <div class="nav-item" data-section="annuale">
@@ -852,24 +865,16 @@
       <!-- Layout 2 col -->
       <div class="dash-main">
         <div class="dash-left">
-          <!-- Grafico donut -->
           <div class="dash-card">
             <div class="dash-card-title">Composizione patrimonio</div>
-            <div class="chart-wrap" style="height:280px;"><canvas id="patChartDonut"></canvas></div>
-          </div>
-          <!-- Grafico barre attivi vs passivi -->
-          <div class="dash-card" style="margin-top:16px;">
-            <div class="dash-card-title">Attivi vs Passivi per asset</div>
-            <div class="chart-wrap" style="height:240px;"><canvas id="patChartBar"></canvas></div>
+            <div class="chart-wrap" style="height:340px;"><canvas id="patChartDonut"></canvas></div>
           </div>
         </div>
         <div class="dash-right">
-          <!-- Tabella attivi -->
           <div class="dash-card" style="margin-bottom:16px;">
             <div class="dash-card-title">Attivi</div>
             <div style="overflow-x:auto;"><table class="riepilogo-table" id="patTabellaAttivi"></table></div>
           </div>
-          <!-- Tabella passivi -->
           <div class="dash-card">
             <div class="dash-card-title">Passivi</div>
             <div style="overflow-x:auto;"><table class="riepilogo-table" id="patTabellaPassivi"></table></div>
@@ -878,6 +883,48 @@
       </div>
 
     </section>
+
+
+    <!-- ── SEZIONE: Calendario ──────────────────────────────────── -->
+    <section class="section" id="sec-calendario">
+
+      <!-- Grafico linee con slider -->
+      <div class="dash-card" style="margin-bottom:20px;">
+        <div class="dash-card-title">Entrate e uscite nel tempo</div>
+        <div class="chart-wrap" style="height:240px;"><canvas id="calChartLine"></canvas></div>
+        <div style="margin-top:16px;display:flex;flex-direction:column;gap:6px;">
+          <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-secondary);">
+            <span>Intervallo visualizzato</span>
+            <span id="calRangeLabel" style="font-family:'Space Mono',monospace;font-size:11px;">—</span>
+          </div>
+          <input type="range" id="calRangeSlider" style="width:100%;accent-color:var(--accent-blue);">
+        </div>
+      </div>
+
+      <!-- Navigazione mese -->
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+        <button class="btn-reset" id="calPrevMonth" style="padding:6px 14px;">‹ Prec</button>
+        <span id="calMonthLabel" style="font-weight:600;font-size:15px;"></span>
+        <button class="btn-reset" id="calNextMonth" style="padding:6px 14px;">Succ ›</button>
+      </div>
+
+      <!-- Griglia calendario -->
+      <div class="dash-card">
+        <div id="calGrid" style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;"></div>
+      </div>
+
+    </section>
+
+    <!-- Popup giorno -->
+    <div id="calPopup" style="display:none;position:fixed;inset:0;z-index:500;align-items:center;justify-content:center;background:rgba(0,0,0,0.55);backdrop-filter:blur(4px);">
+      <div style="background:var(--bg2);border:1px solid var(--border-idle);border-radius:16px;padding:24px;width:360px;max-width:90vw;max-height:80vh;overflow-y:auto;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+          <span style="font-weight:600;font-size:14px;">Spese del giorno</span>
+          <button onclick="document.getElementById('calPopup').style.display='none'" style="background:none;border:none;cursor:pointer;color:var(--text-secondary);font-size:18px;">✕</button>
+        </div>
+        <div id="calPopupBody"></div>
+      </div>
+    </div>
 
   </main>
 </div>
