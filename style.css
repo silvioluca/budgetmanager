@@ -1,4 +1,4 @@
-  /* ─── CSS Variables ─────────────────────────────────────────── */
+/* ─── CSS Variables ─────────────────────────────────────────── */
   :root {
     --bg1: #0f0f0f;
     --bg2: #1a1a1a;
@@ -1131,3 +1131,15 @@
     .dash-main { grid-template-columns: 1fr; }
     .kpi-grid  { grid-template-columns: repeat(2, 1fr); }
   }
+
+  /* ── Calendario ── */
+  .cal-day {
+    min-height: 64px;
+    padding: 6px;
+    border-radius: 8px;
+    border: 1px solid var(--border-idle);
+    transition: background var(--transition);
+    background: var(--bg2);
+  }
+  .cal-day:hover { background: var(--bg3); }
+  .cal-today { border-color: var(--accent-blue) !important; background: rgba(91,155,255,0.07) !important; }
