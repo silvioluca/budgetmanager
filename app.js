@@ -1,4 +1,4 @@
-  // ─── Stato applicazione ───────────────────────────────────────
+// ─── Stato applicazione ───────────────────────────────────────
   const state = {
     sidebarOpen: false,
     theme: 'dark',
@@ -6,7 +6,7 @@
   };
 
   // ─── Apps Script endpoint (JSONP — aggira CORS) ───────────────
-  const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwDdAjdbOjjNhj04Za5isuKDud30gUROmejHr1UALf3OLchW8TstbuK8oxaxKGR1BZ0QQ/exec';
+  const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxWZe56GaUvyMI2HR4XUTxZuE9glfp2fPR34czYq5_-38DohWEyYcFjfl0cI0_5x9i7dg/exec';
 
   function asCall(params) {
     return new Promise((resolve, reject) => {
@@ -288,6 +288,7 @@
     return el;
   })();
 
+  let patrimonioRows = [];
   const CACHE_KEY = 'bm_data_cache';
   const CACHE_TTL = 5 * 60 * 1000; // 5 minuti
 
@@ -308,17 +309,19 @@
   }
 
   function applyData(json) {
-    allRows  = json.rows  || [];
-    mAllRate = json.mutuo || [];
+    allRows        = json.rows       || [];
+    mAllRate       = json.mutuo      || [];
+    patrimonioRows = json.patrimonio || [];
     loadingBanner.remove();
     const s = state.activeSection;
-    if (s === 'elenco')   { populateAnnoFilter(); applyFilters(); }
-    if (s === 'annuale')  renderDashAnnuale();
-    if (s === 'generale') renderDashGenerale();
-    if (s === 'tabelle')  renderTabelle();
-    if (s === 'utenze')   renderUtenze();
-    if (s === 'mutuo')    buildMutuo(mAllRate);
-    if (s === 'cashflow') renderCashflow();
+    if (s === 'elenco')     { populateAnnoFilter(); applyFilters(); }
+    if (s === 'annuale')    renderDashAnnuale();
+    if (s === 'generale')   renderDashGenerale();
+    if (s === 'tabelle')    renderTabelle();
+    if (s === 'utenze')     renderUtenze();
+    if (s === 'mutuo')      buildMutuo(mAllRate);
+    if (s === 'cashflow')   renderCashflow();
+    if (s === 'patrimonio') renderPatrimonio();
   }
 
   async function initApp(forceRefresh = false) {
@@ -1529,7 +1532,8 @@
       if (s === 'tabelle')  renderTabelle();
       if (s === 'utenze')   renderUtenze();
       if (s === 'mutuo')    { if (mAllRate.length) buildMutuo(mAllRate); }
-      if (s === 'cashflow') renderCashflow();
+      if (s === 'cashflow')   renderCashflow();
+      if (s === 'patrimonio') renderPatrimonio();
     });
   });
 
@@ -2106,241 +2110,202 @@
   let cfChartArea = null, cfChartBarUsc = null, cfChartBarEnt = null;
 
   function renderCashflow() {
-    const anno    = document.getElementById('cfAnnoSelect').value;
-    const pagante = document.getElementById('cfPaganteSelect').value;
-
     if (!allRows.length) return;
 
-    // Filtra per pagante
-    let rows = pagante ? allRows.filter(r => r.pagante === pagante) : allRows;
+    const cfAnnoEl   = document.getElementById('cfAnnoSelect');
+    const cfPagEl    = document.getElementById('cfPaganteSelect');
 
-    // Anni disponibili
+    // Popola anni
     const anniDisp = [...new Set(allRows.map(r => r.anno).filter(Boolean))].sort((a,b) => b-a);
-    const cfAnnoEl = document.getElementById('cfAnnoSelect');
     if (cfAnnoEl.options.length === 0) {
-      anniDisp.forEach(a => {
-        const o = document.createElement('option');
-        o.value = a; o.textContent = a;
-        cfAnnoEl.appendChild(o);
-      });
+      anniDisp.forEach(a => { const o = document.createElement('option'); o.value = a; o.textContent = a; cfAnnoEl.appendChild(o); });
     }
 
-    const annoSel = anno || anniDisp[0];
-    if (!anno && cfAnnoEl.value !== annoSel) cfAnnoEl.value = annoSel;
+    const anno    = cfAnnoEl.value || anniDisp[0];
+    const pagante = cfPagEl.value;
+    if (!cfAnnoEl.value) cfAnnoEl.value = anno;
 
-    // Filtra per anno
-    rows = rows.filter(r => r.anno === annoSel);
+    const fmtEur = v => v.toLocaleString('it-IT', { style:'currency', currency:'EUR', maximumFractionDigits:0 });
+    const MESI   = ['Gen','Feb','Mar','Apr','Mag','Giu','Lug','Ago','Set','Ott','Nov','Dic'];
 
-    const MESI = ['Gen','Feb','Mar','Apr','Mag','Giu','Lug','Ago','Set','Ott','Nov','Dic'];
-    const oggi = new Date();
-    const meseCorrente = oggi.getFullYear().toString() === annoSel ? oggi.getMonth() : 11; // 0-indexed
+    // Righe dell'anno selezionato (tutte, per calcolo corretto)
+    let rowsAnno = allRows.filter(r => r.anno === anno);
+    if (pagante) rowsAnno = rowsAnno.filter(r => r.pagante === pagante);
 
-    // Aggregazione per mese
+    // ── Aggregazione per mese ──
     const entratePerMese = Array(12).fill(0);
     const uscitePerMese  = Array(12).fill(0);
-
-    rows.forEach(r => {
-      const m = parseInt(r.mese) - 1; // 0-indexed
+    rowsAnno.forEach(r => {
+      const m = parseInt(r.mese) - 1;
       if (m < 0 || m > 11) return;
-      const v = parseFloat(String(r.costo).replace(',', '.')) || 0;
+      const v = parseFloat(String(r.costo).replace(',','.')) || 0;
       if (r.tipo === 'Entrata') entratePerMese[m] += v;
       else uscitePerMese[m] += v;
     });
 
-    // Mesi con dati (storici)
-    const mesiConDati = entratePerMese.map((e, i) => e > 0 || uscitePerMese[i] > 0);
-    const nMesiStorici = mesiConDati.filter(Boolean).length || 1;
+    // Mesi con dati reali
+    const oggi = new Date();
+    const meseCorrente = oggi.getFullYear().toString() === anno ? oggi.getMonth() : 11;
+    const mesiConDati  = entratePerMese.filter((v,i) => v > 0 || uscitePerMese[i] > 0).length || 1;
 
-    const mediaEntrate = entratePerMese.reduce((s,v) => s+v, 0) / nMesiStorici;
-    const mediaUscite  = uscitePerMese.reduce((s,v) => s+v, 0)  / nMesiStorici;
+    // ── Totali reali anno ──
+    const totEntrate = entratePerMese.reduce((s,v) => s+v, 0);
+    const totUscite  = uscitePerMese.reduce((s,v) => s+v, 0);
+
+    // ── Media mensile (sui mesi con dati) ──
+    const mediaEntrate = totEntrate / mesiConDati;
+    const mediaUscite  = totUscite  / mesiConDati;
     const mediaSaldo   = mediaEntrate - mediaUscite;
 
-    // Mesi futuri da proiettare
-    const mesiFuturi = 11 - meseCorrente;
-    const proiezione = mediaSaldo * mesiFuturi;
+    // ── Top 5 categorie uscite ──
+    const catUsc = {};
+    rowsAnno.filter(r => r.tipo !== 'Entrata').forEach(r => {
+      const v = parseFloat(String(r.costo).replace(',','.')) || 0;
+      catUsc[r.categoria] = (catUsc[r.categoria] || 0) + v;
+    });
+    const top5Usc = Object.entries(catUsc).sort((a,b) => b[1]-a[1]).slice(0,5);
+    const sumTop5Usc  = top5Usc.reduce((s,[,v]) => s+v, 0);
+    const meanTop5Usc = sumTop5Usc / mesiConDati;
 
-    // KPI
-    const fmtEurCf = v => v.toLocaleString('it-IT', { style:'currency', currency:'EUR', maximumFractionDigits:0 });
-    document.getElementById('cfKpiEntrate').textContent    = fmtEurCf(mediaEntrate);
-    document.getElementById('cfKpiUscite').textContent     = fmtEurCf(mediaUscite);
+    // ── Top 5 categorie entrate ──
+    const catEnt = {};
+    rowsAnno.filter(r => r.tipo === 'Entrata').forEach(r => {
+      const v = parseFloat(String(r.costo).replace(',','.')) || 0;
+      catEnt[r.categoria] = (catEnt[r.categoria] || 0) + v;
+    });
+    const top5Ent = Object.entries(catEnt).sort((a,b) => b[1]-a[1]).slice(0,5);
+
+    // ── Previsione: mesi futuri × media mensile ──
+    const mesiFuturi  = Math.max(0, 11 - meseCorrente);
+    const prevEntrate = mediaEntrate * mesiFuturi;
+    const prevUscite  = mediaUscite  * mesiFuturi;
+    const proiezione  = mediaSaldo   * mesiFuturi;
+
+    // ── KPI ──
+    document.getElementById('cfKpiEntrate').textContent   = fmtEur(mediaEntrate);
+    document.getElementById('cfKpiUscite').textContent    = fmtEur(mediaUscite);
     const saldoEl = document.getElementById('cfKpiSaldo');
-    saldoEl.textContent = fmtEurCf(mediaSaldo);
+    saldoEl.textContent = fmtEur(mediaSaldo);
     saldoEl.className   = 'kpi-value ' + (mediaSaldo >= 0 ? 'kpi-green' : 'kpi-red');
     const projEl = document.getElementById('cfKpiProiezione');
-    projEl.textContent = fmtEurCf(proiezione);
+    projEl.textContent = fmtEur(proiezione);
     projEl.className   = 'kpi-value ' + (proiezione >= 0 ? 'kpi-green' : 'kpi-red');
 
     const isDark    = document.documentElement.getAttribute('data-theme') !== 'light';
     const gridColor = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
     const textColor = isDark ? '#888' : '#666';
-    Chart.defaults.color = textColor;
+    Chart.defaults.color      = textColor;
     Chart.defaults.font.family = 'DM Sans';
-    Chart.defaults.font.size = 11;
+    Chart.defaults.font.size  = 11;
 
     // ── Grafico area storico + previsione ──
-    const labelsArea = MESI;
-    const dataEnt   = entratePerMese.map((v, i) => i <= meseCorrente ? v : null);
-    const dataUsc   = uscitePerMese.map((v, i)  => i <= meseCorrente ? v : null);
-    const dataPrevEnt = entratePerMese.map((v, i) => i >= meseCorrente ? (i === meseCorrente ? v || mediaEntrate : mediaEntrate) : null);
-    const dataPrevUsc = uscitePerMese.map((v, i)  => i >= meseCorrente ? (i === meseCorrente ? v || mediaUscite  : mediaUscite)  : null);
+    const dataEntStorico = entratePerMese.map((v,i) => i <= meseCorrente ? v : null);
+    const dataUscStorico  = uscitePerMese.map((v,i)  => i <= meseCorrente ? v : null);
+    const dataEntPrev    = entratePerMese.map((v,i) => i >= meseCorrente ? (i === meseCorrente ? (v || mediaEntrate) : mediaEntrate) : null);
+    const dataUscPrev    = uscitePerMese.map((v,i)  => i >= meseCorrente ? (i === meseCorrente ? (v || mediaUscite)  : mediaUscite)  : null);
 
     if (cfChartArea) cfChartArea.destroy();
-    const oldA = document.getElementById('cfChartArea');
-    const ncA = document.createElement('canvas'); ncA.id = 'cfChartArea';
-    oldA.parentNode.replaceChild(ncA, oldA);
-
-    cfChartArea = new Chart(ncA, {
+    const cA = document.getElementById('cfChartArea');
+    const nA = document.createElement('canvas'); nA.id = 'cfChartArea';
+    cA.parentNode.replaceChild(nA, cA);
+    cfChartArea = new Chart(nA, {
       type: 'line',
-      data: {
-        labels: labelsArea,
-        datasets: [
-          {
-            label: 'Entrate',
-            data: dataEnt,
-            borderColor: '#2ecc71', backgroundColor: 'rgba(46,204,113,0.08)',
-            borderWidth: 2, pointRadius: 3, fill: true, tension: 0.3, spanGaps: false
-          },
-          {
-            label: 'Uscite',
-            data: dataUsc,
-            borderColor: '#ff3b3b', backgroundColor: 'rgba(255,59,59,0.08)',
-            borderWidth: 2, pointRadius: 3, fill: true, tension: 0.3, spanGaps: false
-          },
-          {
-            label: 'Entrate (prev.)',
-            data: dataPrevEnt,
-            borderColor: '#2ecc71', backgroundColor: 'transparent',
-            borderWidth: 2, borderDash: [6,4], pointRadius: 2, fill: false, tension: 0.3, spanGaps: true
-          },
-          {
-            label: 'Uscite (prev.)',
-            data: dataPrevUsc,
-            borderColor: '#ff3b3b', backgroundColor: 'transparent',
-            borderWidth: 2, borderDash: [6,4], pointRadius: 2, fill: false, tension: 0.3, spanGaps: true
-          }
-        ]
-      },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        plugins: {
-          legend: { position: 'bottom', labels: { boxWidth: 12, padding: 16 } },
-          tooltip: { callbacks: { label: ctx => ' ' + fmtEurCf(ctx.parsed.y || 0) } }
-        },
-        scales: {
-          x: { grid: { color: gridColor } },
-          y: { grid: { color: gridColor }, ticks: { callback: v => fmtEurCf(v) } }
-        }
+      data: { labels: MESI, datasets: [
+        { label: 'Entrate',        data: dataEntStorico, borderColor:'#2ecc71', backgroundColor:'rgba(46,204,113,0.08)', borderWidth:2, pointRadius:3, fill:true, tension:0.3, spanGaps:false },
+        { label: 'Uscite',         data: dataUscStorico, borderColor:'#ff3b3b', backgroundColor:'rgba(255,59,59,0.08)',  borderWidth:2, pointRadius:3, fill:true, tension:0.3, spanGaps:false },
+        { label: 'Entrate (prev)', data: dataEntPrev,    borderColor:'#2ecc71', backgroundColor:'transparent', borderWidth:2, borderDash:[6,4], pointRadius:2, fill:false, tension:0.3, spanGaps:true },
+        { label: 'Uscite (prev)',  data: dataUscPrev,    borderColor:'#ff3b3b', backgroundColor:'transparent', borderWidth:2, borderDash:[6,4], pointRadius:2, fill:false, tension:0.3, spanGaps:true },
+      ]},
+      options: { responsive:true, maintainAspectRatio:false,
+        plugins: { legend:{ position:'bottom', labels:{ boxWidth:12, padding:16 }}, tooltip:{ callbacks:{ label: ctx => ' ' + fmtEur(ctx.parsed.y||0) }}},
+        scales: { x:{ grid:{color:gridColor}}, y:{ grid:{color:gridColor}, ticks:{ callback: v => fmtEur(v) }}}
       }
     });
 
-    // ── Top categorie uscite ──
-    const catUsc = {};
-    rows.filter(r => r.tipo !== 'Entrata').forEach(r => {
-      const v = parseFloat(String(r.costo).replace(',','.')) || 0;
-      catUsc[r.categoria] = (catUsc[r.categoria] || 0) + v;
-    });
-    const topUsc = Object.entries(catUsc).sort((a,b) => b[1]-a[1]).slice(0, 8);
-
+    // ── Barre top5 uscite ──
     if (cfChartBarUsc) cfChartBarUsc.destroy();
-    const oldBU = document.getElementById('cfChartBarUsc');
-    const ncBU = document.createElement('canvas'); ncBU.id = 'cfChartBarUsc';
-    oldBU.parentNode.replaceChild(ncBU, oldBU);
-
-    cfChartBarUsc = new Chart(ncBU, {
-      type: 'bar',
-      data: {
-        labels: topUsc.map(([k]) => k),
-        datasets: [{
-          label: 'Media mensile',
-          data: topUsc.map(([,v]) => v / nMesiStorici),
-          backgroundColor: 'rgba(255,59,59,0.55)', borderRadius: 6, borderSkipped: false
-        }]
-      },
-      options: {
-        responsive: true, maintainAspectRatio: false, indexAxis: 'y',
-        plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ' ' + fmtEurCf(ctx.parsed.x) } } },
-        scales: {
-          x: { grid: { color: gridColor }, ticks: { callback: v => fmtEurCf(v) } },
-          y: { grid: { color: gridColor } }
-        }
+    const cBU = document.getElementById('cfChartBarUsc');
+    const nBU = document.createElement('canvas'); nBU.id = 'cfChartBarUsc';
+    cBU.parentNode.replaceChild(nBU, cBU);
+    cfChartBarUsc = new Chart(nBU, {
+      type:'bar',
+      data:{ labels: top5Usc.map(([k])=>k), datasets:[
+        { label:'Totale anno', data: top5Usc.map(([,v])=>v), backgroundColor:'rgba(255,59,59,0.45)', borderRadius:6, borderSkipped:false },
+        { label:'Media/mese',  data: top5Usc.map(([,v])=>v/mesiConDati), backgroundColor:'rgba(255,59,59,0.8)', borderRadius:6, borderSkipped:false },
+      ]},
+      options:{ responsive:true, maintainAspectRatio:false, indexAxis:'y',
+        plugins:{ legend:{ position:'bottom', labels:{ boxWidth:10, padding:12 }}, tooltip:{ callbacks:{ label: ctx => ' ' + fmtEur(ctx.parsed.x) }}},
+        scales:{ x:{ grid:{color:gridColor}, ticks:{ callback: v => fmtEur(v) }}, y:{ grid:{color:gridColor} }}
       }
     });
 
-    // ── Top categorie entrate ──
-    const catEnt = {};
-    rows.filter(r => r.tipo === 'Entrata').forEach(r => {
-      const v = parseFloat(String(r.costo).replace(',','.')) || 0;
-      catEnt[r.categoria] = (catEnt[r.categoria] || 0) + v;
-    });
-    const topEnt = Object.entries(catEnt).sort((a,b) => b[1]-a[1]).slice(0, 6);
-
+    // ── Barre top5 entrate ──
     if (cfChartBarEnt) cfChartBarEnt.destroy();
-    const oldBE = document.getElementById('cfChartBarEnt');
-    const ncBE = document.createElement('canvas'); ncBE.id = 'cfChartBarEnt';
-    oldBE.parentNode.replaceChild(ncBE, oldBE);
-
-    cfChartBarEnt = new Chart(ncBE, {
-      type: 'bar',
-      data: {
-        labels: topEnt.map(([k]) => k),
-        datasets: [{
-          label: 'Media mensile',
-          data: topEnt.map(([,v]) => v / nMesiStorici),
-          backgroundColor: 'rgba(46,204,113,0.55)', borderRadius: 6, borderSkipped: false
-        }]
-      },
-      options: {
-        responsive: true, maintainAspectRatio: false, indexAxis: 'y',
-        plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ' ' + fmtEurCf(ctx.parsed.x) } } },
-        scales: {
-          x: { grid: { color: gridColor }, ticks: { callback: v => fmtEurCf(v) } },
-          y: { grid: { color: gridColor } }
-        }
+    const cBE = document.getElementById('cfChartBarEnt');
+    const nBE = document.createElement('canvas'); nBE.id = 'cfChartBarEnt';
+    cBE.parentNode.replaceChild(nBE, cBE);
+    cfChartBarEnt = new Chart(nBE, {
+      type:'bar',
+      data:{ labels: top5Ent.map(([k])=>k), datasets:[
+        { label:'Totale anno', data: top5Ent.map(([,v])=>v), backgroundColor:'rgba(46,204,113,0.45)', borderRadius:6, borderSkipped:false },
+        { label:'Media/mese',  data: top5Ent.map(([,v])=>v/mesiConDati), backgroundColor:'rgba(46,204,113,0.8)', borderRadius:6, borderSkipped:false },
+      ]},
+      options:{ responsive:true, maintainAspectRatio:false, indexAxis:'y',
+        plugins:{ legend:{ position:'bottom', labels:{ boxWidth:10, padding:12 }}, tooltip:{ callbacks:{ label: ctx => ' ' + fmtEur(ctx.parsed.x) }}},
+        scales:{ x:{ grid:{color:gridColor}, ticks:{ callback: v => fmtEur(v) }}, y:{ grid:{color:gridColor} }}
       }
     });
 
-    // ── Tabella dettaglio mensile ──
+    // ── Tabella cashflow classica ──
     let html = `<thead><tr>
       <th style="text-align:left">Mese</th>
       <th style="text-align:right">Entrate</th>
       <th style="text-align:right">Uscite</th>
-      <th style="text-align:right">Saldo</th>
-      <th style="text-align:right">Tipo</th>
+      <th style="text-align:right">Saldo mese</th>
+      <th style="text-align:right">Saldo cumulato</th>
+      <th style="text-align:right">Nota</th>
     </tr></thead><tbody>`;
 
+    let saldoCumulato = 0;
     MESI.forEach((label, i) => {
-      const e = entratePerMese[i];
-      const u = uscitePerMese[i];
-      const saldo = e - u;
       const futuro = i > meseCorrente;
-      const preview = futuro;
-      const eFmt = preview ? fmtEurCf(mediaEntrate) : (e > 0 ? fmtEurCf(e) : '—');
-      const uFmt = preview ? fmtEurCf(mediaUscite)  : (u > 0 ? fmtEurCf(u)  : '—');
-      const saldoVal  = preview ? mediaSaldo : saldo;
-      const saldoFmt  = (e > 0 || u > 0 || preview) ? fmtEurCf(saldoVal) : '—';
-      const saldoClass = saldoVal >= 0 ? 'pos' : 'neg';
+      const e = futuro ? mediaEntrate : entratePerMese[i];
+      const u = futuro ? mediaUscite  : uscitePerMese[i];
+      const vuoto = !futuro && e === 0 && u === 0;
+      const saldo = e - u;
+      saldoCumulato += saldo;
       const opacity = futuro ? 'opacity:0.5;font-style:italic;' : '';
-      const tipoLabel = futuro ? '<span style="font-size:11px;color:var(--accent-blue);">previsione</span>' : (i === meseCorrente ? '<span style="font-size:11px;color:var(--accent-amber);">in corso</span>' : '');
-
+      const nota = futuro
+        ? '<span style="font-size:11px;color:var(--accent-blue);">previsione</span>'
+        : i === meseCorrente
+          ? '<span style="font-size:11px;color:var(--accent-amber);">in corso</span>'
+          : '';
       html += `<tr style="${opacity}">
-        <td style="font-weight:600;">${label}</td>
-        <td style="text-align:right;color:var(--accent-green);font-family:'Space Mono',monospace;font-size:12px;">${eFmt}</td>
-        <td style="text-align:right;color:var(--accent-red);font-family:'Space Mono',monospace;font-size:12px;">${uFmt}</td>
-        <td style="text-align:right;font-family:'Space Mono',monospace;font-size:12px;" class="${(e>0||u>0||preview)?saldoClass:''}">${saldoFmt}</td>
-        <td style="text-align:right;">${tipoLabel}</td>
+        <td style="font-weight:600">${label}</td>
+        <td style="text-align:right;color:var(--accent-green);font-family:'Space Mono',monospace;font-size:12px">${vuoto?'—':fmtEur(e)}</td>
+        <td style="text-align:right;color:var(--accent-red);font-family:'Space Mono',monospace;font-size:12px">${vuoto?'—':fmtEur(u)}</td>
+        <td style="text-align:right;font-family:'Space Mono',monospace;font-size:12px" class="${vuoto?'':saldo>=0?'pos':'neg'}">${vuoto?'—':fmtEur(saldo)}</td>
+        <td style="text-align:right;font-family:'Space Mono',monospace;font-size:12px" class="${saldoCumulato>=0?'pos':'neg'}">${fmtEur(saldoCumulato)}</td>
+        <td style="text-align:right">${nota}</td>
       </tr>`;
     });
 
-    // Riga totale
-    const totE = entratePerMese.reduce((s,v)=>s+v,0) + (mesiFuturi * mediaEntrate);
-    const totU = uscitePerMese.reduce((s,v)=>s+v,0)  + (mesiFuturi * mediaUscite);
-    const totS = totE - totU;
+    // Riga riepilogo
+    const totPrevE = totEntrate + prevEntrate;
+    const totPrevU = totUscite  + prevUscite;
+    const totPrevS = totPrevE - totPrevU;
     html += `<tr class="tot-row">
-      <td>Totale anno</td>
-      <td style="text-align:right;color:var(--accent-green);font-family:'Space Mono',monospace;font-size:12px;">${fmtEurCf(totE)}</td>
-      <td style="text-align:right;color:var(--accent-red);font-family:'Space Mono',monospace;font-size:12px;">${fmtEurCf(totU)}</td>
-      <td style="text-align:right;font-family:'Space Mono',monospace;font-size:12px;" class="${totS>=0?'pos':'neg'}">${fmtEurCf(totS)}</td>
+      <td>Anno completo</td>
+      <td style="text-align:right;color:var(--accent-green);font-family:'Space Mono',monospace;font-size:12px">${fmtEur(totPrevE)}</td>
+      <td style="text-align:right;color:var(--accent-red);font-family:'Space Mono',monospace;font-size:12px">${fmtEur(totPrevU)}</td>
+      <td style="text-align:right;font-family:'Space Mono',monospace;font-size:12px" class="${totPrevS>=0?'pos':'neg'}">${fmtEur(totPrevS)}</td>
+      <td style="text-align:right;font-family:'Space Mono',monospace;font-size:12px" class="${totPrevS>=0?'pos':'neg'}">${fmtEur(totPrevS)}</td>
       <td></td>
+    </tr>`;
+    html += `<tr style="font-size:12px;color:var(--text-secondary)">
+      <td colspan="6" style="padding-top:8px">
+        Top 5 uscite: ${fmtEur(sumTop5Usc)} totale, ${fmtEur(meanTop5Usc)} media/mese
+      </td>
     </tr>`;
     html += '</tbody>';
     document.getElementById('cfTabella').innerHTML = html;
@@ -2350,6 +2315,102 @@
     document.getElementById(id).addEventListener('change', renderCashflow);
   });
 
+
+  // ─── Sezione Patrimonio ───────────────────────────────────────
+  let patChartDonut = null, patChartBar = null;
+
+  function renderPatrimonio() {
+    const rows = patrimonioRows;
+    if (!rows.length) {
+      document.getElementById('patKpiAttivi').textContent  = '—';
+      document.getElementById('patKpiPassivi').textContent = '—';
+      document.getElementById('patKpiNetto').textContent   = '—';
+      return;
+    }
+
+    const fmtEur = v => v.toLocaleString('it-IT', { style:'currency', currency:'EUR', maximumFractionDigits:0 });
+
+    const attivi  = rows.filter(r => r.tipologia.toLowerCase().includes('attiv'));
+    const passivi = rows.filter(r => r.tipologia.toLowerCase().includes('passiv'));
+
+    const totAttivi  = attivi.reduce((s,r)  => s + r.valore, 0);
+    const totPassivi = passivi.reduce((s,r) => s + r.valore, 0);
+    const netto      = totAttivi - totPassivi;
+
+    // KPI
+    document.getElementById('patKpiAttivi').textContent  = fmtEur(totAttivi);
+    document.getElementById('patKpiPassivi').textContent = fmtEur(totPassivi);
+    const nettoEl = document.getElementById('patKpiNetto');
+    nettoEl.textContent = fmtEur(netto);
+    nettoEl.className   = 'kpi-value ' + (netto >= 0 ? 'kpi-green' : 'kpi-red');
+
+    const isDark    = document.documentElement.getAttribute('data-theme') !== 'light';
+    const gridColor = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
+    const textColor = isDark ? '#888' : '#666';
+    Chart.defaults.color       = textColor;
+    Chart.defaults.font.family = 'DM Sans';
+    Chart.defaults.font.size   = 11;
+
+    const COLORS_ACT = ['#5b9bff','#2ecc71','#f39c12','#9b59b6','#1abc9c','#e67e22','#3498db','#27ae60'];
+    const COLORS_PAS = ['#ff3b3b','#e74c3c','#c0392b','#ff6b6b'];
+
+    // Donut: tutti gli asset colorati per tipo
+    const donutLabels = rows.map(r => r.asset);
+    const donutData   = rows.map(r => r.valore);
+    const donutColors = rows.map((r,i) => r.tipologia.toLowerCase().includes('attiv') ? COLORS_ACT[i % COLORS_ACT.length] : COLORS_PAS[i % COLORS_PAS.length]);
+
+    if (patChartDonut) patChartDonut.destroy();
+    const cD = document.getElementById('patChartDonut');
+    const nD = document.createElement('canvas'); nD.id = 'patChartDonut';
+    cD.parentNode.replaceChild(nD, cD);
+    patChartDonut = new Chart(nD, {
+      type: 'doughnut',
+      data: { labels: donutLabels, datasets: [{ data: donutData, backgroundColor: donutColors, borderWidth: 2, borderColor: isDark ? '#1a1a1a' : '#fff' }]},
+      options: { responsive:true, maintainAspectRatio:false, cutout:'62%',
+        plugins: { legend:{ position:'right', labels:{ boxWidth:12, padding:14 }}, tooltip:{ callbacks:{ label: ctx => ' ' + fmtEur(ctx.parsed) }}}
+      }
+    });
+
+    // Barre: attivi e passivi per asset
+    if (patChartBar) patChartBar.destroy();
+    const allAssets   = rows.map(r => r.asset);
+    const attiviMap   = Object.fromEntries(attivi.map(r  => [r.asset, r.valore]));
+    const passiviMap  = Object.fromEntries(passivi.map(r => [r.asset, r.valore]));
+
+    const cB = document.getElementById('patChartBar');
+    const nB = document.createElement('canvas'); nB.id = 'patChartBar';
+    cB.parentNode.replaceChild(nB, cB);
+    patChartBar = new Chart(nB, {
+      type:'bar',
+      data:{ labels: allAssets, datasets:[
+        { label:'Attivo',  data: allAssets.map(a => attiviMap[a]  || 0), backgroundColor:'rgba(46,204,113,0.7)',  borderRadius:5, borderSkipped:false },
+        { label:'Passivo', data: allAssets.map(a => passiviMap[a] || 0), backgroundColor:'rgba(255,59,59,0.7)',   borderRadius:5, borderSkipped:false },
+      ]},
+      options:{ responsive:true, maintainAspectRatio:false, indexAxis:'y',
+        plugins:{ legend:{ position:'bottom', labels:{ boxWidth:10, padding:12 }}, tooltip:{ callbacks:{ label: ctx => ' ' + fmtEur(ctx.parsed.x) }}},
+        scales:{ x:{ grid:{color:gridColor}, ticks:{ callback: v => fmtEur(v) }}, y:{ grid:{color:gridColor} }}
+      }
+    });
+
+    // Tabella attivi
+    const buildTable = (arr, colorClass) => {
+      const tot = arr.reduce((s,r) => s+r.valore, 0);
+      let h = `<thead><tr><th style="text-align:left">Asset</th><th style="text-align:right">Valore</th><th style="text-align:right">% sul totale</th></tr></thead><tbody>`;
+      arr.sort((a,b) => b.valore-a.valore).forEach(r => {
+        const pct = tot > 0 ? (r.valore/tot*100).toFixed(1) : '0.0';
+        h += `<tr>
+          <td style="font-weight:600">${r.asset}</td>
+          <td style="text-align:right;font-family:'Space Mono',monospace;font-size:12px" class="${colorClass}">${fmtEur(r.valore)}</td>
+          <td style="text-align:right;color:var(--text-secondary);font-size:12px">${pct}%</td>
+        </tr>`;
+      });
+      h += `<tr class="tot-row"><td>Totale</td><td style="text-align:right;font-family:'Space Mono',monospace;font-size:12px" class="${colorClass}">${fmtEur(tot)}</td><td></td></tr></tbody>`;
+      return h;
+    };
+
+    document.getElementById('patTabellaAttivi').innerHTML  = buildTable(attivi,  'pos');
+    document.getElementById('patTabellaPassivi').innerHTML = buildTable(passivi, 'neg');
+  }
 
   // ── Avvio app ──
   initApp();
