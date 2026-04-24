@@ -121,6 +121,14 @@
       Cashflow
     </div>
 
+    <div class="nav-item" data-section="patrimonio">
+      <svg class="nav-icon" viewBox="0 0 18 18" fill="none">
+        <circle cx="9" cy="9" r="7" stroke="currentColor" stroke-width="1.4"/>
+        <path d="M9 5v4l3 2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+      Patrimonio
+    </div>
+
   </nav>
 
   <!-- ─── MAIN ─────────────────────────────────────────────────── -->
@@ -817,6 +825,56 @@
           </div>
         </div>
 
+      </div>
+
+    </section>
+
+
+    <!-- ── SEZIONE: Patrimonio ──────────────────────────────────── -->
+    <section class="section" id="sec-patrimonio">
+
+      <!-- KPI cards -->
+      <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:20px;">
+        <div class="kpi-card">
+          <span class="kpi-label">Totale attivi</span>
+          <span class="kpi-value kpi-green" id="patKpiAttivi">—</span>
+        </div>
+        <div class="kpi-card">
+          <span class="kpi-label">Totale passivi</span>
+          <span class="kpi-value kpi-red" id="patKpiPassivi">—</span>
+        </div>
+        <div class="kpi-card">
+          <span class="kpi-label">Patrimonio netto</span>
+          <span class="kpi-value" id="patKpiNetto">—</span>
+        </div>
+      </div>
+
+      <!-- Layout 2 col -->
+      <div class="dash-main">
+        <div class="dash-left">
+          <!-- Grafico donut -->
+          <div class="dash-card">
+            <div class="dash-card-title">Composizione patrimonio</div>
+            <div class="chart-wrap" style="height:280px;"><canvas id="patChartDonut"></canvas></div>
+          </div>
+          <!-- Grafico barre attivi vs passivi -->
+          <div class="dash-card" style="margin-top:16px;">
+            <div class="dash-card-title">Attivi vs Passivi per asset</div>
+            <div class="chart-wrap" style="height:240px;"><canvas id="patChartBar"></canvas></div>
+          </div>
+        </div>
+        <div class="dash-right">
+          <!-- Tabella attivi -->
+          <div class="dash-card" style="margin-bottom:16px;">
+            <div class="dash-card-title">Attivi</div>
+            <div style="overflow-x:auto;"><table class="riepilogo-table" id="patTabellaAttivi"></table></div>
+          </div>
+          <!-- Tabella passivi -->
+          <div class="dash-card">
+            <div class="dash-card-title">Passivi</div>
+            <div style="overflow-x:auto;"><table class="riepilogo-table" id="patTabellaPassivi"></table></div>
+          </div>
+        </div>
       </div>
 
     </section>
