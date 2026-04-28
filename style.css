@@ -1143,3 +1143,16 @@
   }
   .cal-day:hover { background: var(--bg3); }
   .cal-today { border-color: var(--accent-blue) !important; background: rgba(91,155,255,0.07) !important; }
+
+  /* ── Scadenze ── */
+  .scad-item {
+    background: var(--bg2);
+    border: 1px solid var(--border-idle);
+    border-radius: 12px;
+    padding: 14px 16px;
+    transition: border-color var(--transition);
+  }
+  .scad-item:hover { border-color: var(--border-hover); }
+  .scad-scaduta { border-left: 3px solid var(--accent-red); }
+  .scad-pagata  { border-left: 3px solid var(--accent-green); opacity: 0.75; }
+  .kpi-amber { color: #ff9800; }
