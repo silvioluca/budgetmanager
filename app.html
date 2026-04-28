@@ -78,6 +78,15 @@
       Calendario
     </div>
 
+    <div class="nav-item" data-section="scadenze">
+      <svg class="nav-icon" viewBox="0 0 18 18" fill="none">
+        <circle cx="9" cy="9" r="7" stroke="currentColor" stroke-width="1.4"/>
+        <line x1="9" y1="5" x2="9" y2="9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+        <line x1="9" y1="9" x2="12" y2="11" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+      Scadenze
+    </div>
+
     <div class="sidebar-section-label">Analisi</div>
 
     <div class="nav-item" data-section="annuale">
@@ -938,6 +947,90 @@
           <button onclick="document.getElementById('calPopup').style.display='none'" style="background:none;border:none;cursor:pointer;color:var(--text-secondary);font-size:18px;">✕</button>
         </div>
         <div id="calPopupBody"></div>
+      </div>
+    </div>
+
+
+    <!-- ── SEZIONE: Scadenze ────────────────────────────────────── -->
+    <section class="section" id="sec-scadenze">
+
+      <!-- KPI -->
+      <div class="kpi-grid" style="grid-template-columns:repeat(5,1fr);margin-bottom:20px;">
+        <div class="kpi-card">
+          <span class="kpi-label">Prossime</span>
+          <span class="kpi-value" id="scadKpiProssime">—</span>
+        </div>
+        <div class="kpi-card">
+          <span class="kpi-label">Scadute non pagate</span>
+          <span class="kpi-value kpi-red" id="scadKpiScadute">—</span>
+        </div>
+        <div class="kpi-card">
+          <span class="kpi-label">Adempiute</span>
+          <span class="kpi-value kpi-green" id="scadKpiPagate">—</span>
+        </div>
+        <div class="kpi-card">
+          <span class="kpi-label">Entro 30 giorni</span>
+          <span class="kpi-value kpi-amber" id="scadKpiImminenti">—</span>
+        </div>
+        <div class="kpi-card">
+          <span class="kpi-label">Totale da pagare</span>
+          <span class="kpi-value kpi-red" id="scadKpiTotPross">—</span>
+        </div>
+      </div>
+
+      <!-- Header tabs + bottone nuovo -->
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
+        <div style="display:flex;gap:6px;">
+          <button class="scad-tab btn-reset active" data-tab="prossime" style="padding:6px 14px;font-size:13px;">Prossime & scadute</button>
+          <button class="scad-tab btn-reset" data-tab="pagate"   style="padding:6px 14px;font-size:13px;">Adempiute</button>
+          <button class="scad-tab btn-reset" data-tab="tutte"    style="padding:6px 14px;font-size:13px;">Tutte</button>
+        </div>
+        <button class="btn-primary" onclick="scadOpenNew()" style="padding:8px 18px;font-size:13px;">+ Nuova scadenza</button>
+      </div>
+
+      <!-- Lista scadenze -->
+      <div id="scadList" style="display:flex;flex-direction:column;gap:10px;"></div>
+
+    </section>
+
+    <!-- Modal scadenza -->
+    <div id="scadModal" style="display:none;position:fixed;inset:0;z-index:500;align-items:center;justify-content:center;background:rgba(0,0,0,0.55);backdrop-filter:blur(4px);">
+      <div style="background:var(--bg2);border:1px solid var(--border-idle);border-radius:16px;padding:28px;width:440px;max-width:92vw;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+          <span id="scadFormTitle" style="font-weight:600;font-size:15px;">Nuova scadenza</span>
+          <button onclick="scadCloseModal()" style="background:none;border:none;cursor:pointer;color:var(--text-secondary);font-size:20px;">✕</button>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:14px;">
+          <div class="form-group">
+            <label class="form-label">Descrizione *</label>
+            <input class="form-input" id="scadFldDescrizione" placeholder="Es. Bollo auto, Rata mutuo...">
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+            <div class="form-group">
+              <label class="form-label">Data inserimento</label>
+              <input class="form-input" id="scadFldInserimento" type="date">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Data scadenza</label>
+              <input class="form-input" id="scadFldScadenza" type="date">
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+            <div class="form-group">
+              <label class="form-label">Data adempimento</label>
+              <input class="form-input" id="scadFldAdempimento" type="date" placeholder="Lascia vuoto se non pagata">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Importo (€)</label>
+              <input class="form-input" id="scadFldCosto" type="number" step="0.01" placeholder="0.00">
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Categoria</label>
+            <input class="form-input" id="scadFldCategoria" placeholder="Es. Assicurazione, Tasse...">
+          </div>
+          <button class="btn-primary" id="scadBtnSave" onclick="scadSave()" style="width:100%;margin-top:6px;">Salva</button>
+        </div>
       </div>
     </div>
 
