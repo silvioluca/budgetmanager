@@ -6,7 +6,7 @@
   };
 
   // ─── Apps Script endpoint (JSONP — aggira CORS) ───────────────
-  const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyEUsipvNPc7dEXWCMYntN-hcQeBuBCnEYTbNagF3Xeg1gfU_jHYcRilxZseSxvoi32Eg/exec';
+  const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyuos51OtGOkEqxECk6buBNY1dTGdMTTY7Edgup2k4t-jx_3grDrPPuYmZGR0L_80F63w/exec';
 
   function asCall(params) {
     return new Promise((resolve, reject) => {
@@ -289,6 +289,7 @@
   })();
 
   let patrimonioRows = [];
+  let scadenzeRows   = [];
   const CACHE_KEY = 'bm_data_cache';
   const CACHE_TTL = 5 * 60 * 1000; // 5 minuti
 
@@ -312,6 +313,7 @@
     allRows        = json.rows       || [];
     mAllRate       = json.mutuo      || [];
     patrimonioRows = json.patrimonio || [];
+    scadenzeRows   = json.scadenze   || [];
     loadingBanner.remove();
     const s = state.activeSection;
     if (s === 'elenco')     { populateAnnoFilter(); applyFilters(); }
@@ -323,6 +325,7 @@
     if (s === 'cashflow')   renderCashflow();
     if (s === 'patrimonio') renderPatrimonio();
     if (s === 'calendario')  { renderCalendario(); }
+    if (s === 'scadenze')    renderScadenze();
   }
 
   async function initApp(forceRefresh = false) {
@@ -1536,6 +1539,7 @@
       if (s === 'cashflow')   renderCashflow();
       if (s === 'patrimonio') renderPatrimonio();
       if (s === 'calendario')  { renderCalendario(); }
+      if (s === 'scadenze')    renderScadenze();
     });
   });
 
@@ -2763,6 +2767,184 @@
     makeDraggable(thumbL, true);
     makeDraggable(thumbR, false);
   }
+
+
+  // ─── Sezione Scadenze ─────────────────────────────────────────
+  let scadFilter = 'prossime'; // 'prossime' | 'pagate' | 'tutte'
+  let scadEditRow = null;
+
+  function renderScadenze() {
+    renderScadKpi();
+    renderScadList();
+  }
+
+  function renderScadKpi() {
+    const oggi = new Date(); oggi.setHours(0,0,0,0);
+    const fmtEur = v => v.toLocaleString('it-IT', { style:'currency', currency:'EUR', maximumFractionDigits:0 });
+
+    const prossime  = scadenzeRows.filter(r => !r.dataAdempimento && r.dataScadenza && new Date(r.dataScadenza) >= oggi);
+    const scadute   = scadenzeRows.filter(r => !r.dataAdempimento && r.dataScadenza && new Date(r.dataScadenza) < oggi);
+    const pagate    = scadenzeRows.filter(r =>  r.dataAdempimento);
+    const imminenti = prossime.filter(r => { const d = new Date(r.dataScadenza); return (d-oggi)/(1000*60*60*24) <= 30; });
+
+    document.getElementById('scadKpiProssime').textContent  = prossime.length;
+    document.getElementById('scadKpiScadute').textContent   = scadute.length;
+    document.getElementById('scadKpiPagate').textContent    = pagate.length;
+    document.getElementById('scadKpiImminenti').textContent = imminenti.length;
+
+    const totPross = prossime.reduce((s,r) => s+r.costo, 0);
+    document.getElementById('scadKpiTotPross').textContent = fmtEur(totPross);
+  }
+
+  function renderScadList() {
+    const oggi = new Date(); oggi.setHours(0,0,0,0);
+    const fmtEur  = v => v.toLocaleString('it-IT', { style:'currency', currency:'EUR', maximumFractionDigits:0 });
+    const fmtDate = s => { if (!s) return '—'; const d = new Date(s); return `${d.getDate()}/${d.getMonth()+1}/${d.getFullYear()}`; };
+
+    // Tab attivo
+    document.querySelectorAll('.scad-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === scadFilter));
+
+    let rows;
+    if (scadFilter === 'prossime') {
+      rows = scadenzeRows
+        .filter(r => !r.dataAdempimento)
+        .sort((a,b) => new Date(a.dataScadenza) - new Date(b.dataScadenza));
+    } else if (scadFilter === 'pagate') {
+      rows = scadenzeRows
+        .filter(r => r.dataAdempimento)
+        .sort((a,b) => new Date(b.dataAdempimento) - new Date(a.dataAdempimento));
+    } else {
+      rows = [...scadenzeRows].sort((a,b) => new Date(a.dataScadenza) - new Date(b.dataScadenza));
+    }
+
+    const container = document.getElementById('scadList');
+    if (!rows.length) {
+      container.innerHTML = '<div style="color:var(--text-secondary);font-size:14px;padding:20px 0;">Nessuna scadenza.</div>';
+      return;
+    }
+
+    let html = '';
+    rows.forEach(r => {
+      const pagata   = !!r.dataAdempimento;
+      const scad     = r.dataScadenza ? new Date(r.dataScadenza) : null;
+      const giorniAl = scad ? Math.ceil((scad - oggi) / (1000*60*60*24)) : null;
+
+      let badge = '';
+      if (pagata) {
+        badge = `<span style="font-size:11px;padding:2px 8px;border-radius:20px;background:rgba(46,204,113,0.12);color:var(--accent-green);">✓ Adempiuta</span>`;
+      } else if (scad && scad < oggi) {
+        badge = `<span style="font-size:11px;padding:2px 8px;border-radius:20px;background:rgba(255,59,59,0.12);color:var(--accent-red);">⚠ Scaduta</span>`;
+      } else if (giorniAl !== null && giorniAl <= 7) {
+        badge = `<span style="font-size:11px;padding:2px 8px;border-radius:20px;background:rgba(255,152,0,0.12);color:#ff9800;">! ${giorniAl}g</span>`;
+      } else if (giorniAl !== null && giorniAl <= 30) {
+        badge = `<span style="font-size:11px;padding:2px 8px;border-radius:20px;background:rgba(255,193,7,0.12);color:#ffc107;">${giorniAl}g</span>`;
+      }
+
+      html += `<div class="scad-item${pagata?' scad-pagata':scad&&scad<oggi?' scad-scaduta':''}" data-row="${r.rowIndex}">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
+          <div style="flex:1;min-width:0;">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap;">
+              <span style="font-weight:600;font-size:14px;">${r.descrizione}</span>
+              ${badge}
+            </div>
+            <div style="display:flex;gap:16px;font-size:12px;color:var(--text-secondary);flex-wrap:wrap;">
+              ${r.categoria ? `<span>📂 ${r.categoria}</span>` : ''}
+              ${r.dataScadenza ? `<span>📅 Scade: ${fmtDate(r.dataScadenza)}</span>` : ''}
+              ${pagata ? `<span>✅ Adempiuta: ${fmtDate(r.dataAdempimento)}</span>` : ''}
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0;">
+            ${r.costo ? `<span style="font-family:'Space Mono',monospace;font-size:13px;font-weight:600;color:${pagata?'var(--accent-green)':'var(--text-primary)'};">${fmtEur(r.costo)}</span>` : ''}
+            <div style="display:flex;gap:6px;">
+              ${!pagata ? `<button class="btn-reset" style="font-size:11px;padding:4px 10px;color:var(--accent-green);border-color:rgba(46,204,113,0.3);" onclick="scadMarkPagata(${r.rowIndex})">✓ Adempi</button>` : ''}
+              <button class="btn-reset" style="font-size:11px;padding:4px 10px;" onclick="scadOpenEdit(${r.rowIndex})">✎ Modifica</button>
+            </div>
+          </div>
+        </div>
+      </div>`;
+    });
+
+    container.innerHTML = html;
+  }
+
+  window.scadMarkPagata = async function(rowIndex) {
+    const r = scadenzeRows.find(x => x.rowIndex === rowIndex);
+    if (!r) return;
+    const oggi = new Date();
+    const dateStr = `${oggi.getFullYear()}-${String(oggi.getMonth()+1).padStart(2,'0')}-${String(oggi.getDate()).padStart(2,'0')}`;
+    const row = [r.dataInserimento, r.dataScadenza, dateStr, r.descrizione, r.categoria, r.costo];
+    try {
+      await asCall({ action: 'update', sheet: 'Scadenze', rowIndex, row: JSON.stringify(row) });
+      r.dataAdempimento = dateStr;
+      sessionStorage.removeItem(CACHE_KEY);
+      renderScadenze();
+    } catch(e) { alert('Errore: ' + e.message); }
+  };
+
+  window.scadOpenEdit = function(rowIndex) {
+    const r = scadenzeRows.find(x => x.rowIndex === rowIndex) || {};
+    scadEditRow = rowIndex;
+    document.getElementById('scadFldInserimento').value   = r.dataInserimento  || '';
+    document.getElementById('scadFldScadenza').value      = r.dataScadenza     || '';
+    document.getElementById('scadFldAdempimento').value   = r.dataAdempimento  || '';
+    document.getElementById('scadFldDescrizione').value   = r.descrizione      || '';
+    document.getElementById('scadFldCategoria').value     = r.categoria        || '';
+    document.getElementById('scadFldCosto').value         = r.costo            || '';
+    document.getElementById('scadFormTitle').textContent  = 'Modifica scadenza';
+    document.getElementById('scadModal').style.display    = 'flex';
+  };
+
+  window.scadOpenNew = function() {
+    scadEditRow = null;
+    ['scadFldInserimento','scadFldScadenza','scadFldAdempimento','scadFldDescrizione','scadFldCategoria','scadFldCosto']
+      .forEach(id => document.getElementById(id).value = '');
+    const oggi = new Date();
+    document.getElementById('scadFldInserimento').value = `${oggi.getFullYear()}-${String(oggi.getMonth()+1).padStart(2,'0')}-${String(oggi.getDate()).padStart(2,'0')}`;
+    document.getElementById('scadFormTitle').textContent = 'Nuova scadenza';
+    document.getElementById('scadModal').style.display   = 'flex';
+  };
+
+  window.scadCloseModal = function() {
+    document.getElementById('scadModal').style.display = 'none';
+    scadEditRow = null;
+  };
+
+  window.scadSave = async function() {
+    const ins  = document.getElementById('scadFldInserimento').value;
+    const scad = document.getElementById('scadFldScadenza').value;
+    const adem = document.getElementById('scadFldAdempimento').value;
+    const desc = document.getElementById('scadFldDescrizione').value.trim();
+    const cat  = document.getElementById('scadFldCategoria').value.trim();
+    const cost = parseFloat(document.getElementById('scadFldCosto').value.replace(',','.')) || 0;
+
+    if (!desc) { alert('Inserisci una descrizione.'); return; }
+
+    const row = [ins, scad, adem, desc, cat, cost];
+    const btn = document.getElementById('scadBtnSave');
+    btn.disabled = true; btn.textContent = 'Salvo…';
+
+    try {
+      if (scadEditRow) {
+        await asCall({ action: 'update', sheet: 'Scadenze', rowIndex: scadEditRow, row: JSON.stringify(row) });
+        const idx = scadenzeRows.findIndex(x => x.rowIndex === scadEditRow);
+        if (idx >= 0) scadenzeRows[idx] = { rowIndex: scadEditRow, dataInserimento: ins, dataScadenza: scad, dataAdempimento: adem, descrizione: desc, categoria: cat, costo: cost };
+      } else {
+        await asCall({ action: 'append', sheet: 'Scadenze', row: JSON.stringify(row) });
+        scadenzeRows.push({ rowIndex: scadenzeRows.length + 2, dataInserimento: ins, dataScadenza: scad, dataAdempimento: adem, descrizione: desc, categoria: cat, costo: cost });
+      }
+      sessionStorage.removeItem(CACHE_KEY);
+      scadCloseModal();
+      renderScadenze();
+    } catch(e) {
+      alert('Errore: ' + e.message);
+    } finally {
+      btn.disabled = false; btn.textContent = 'Salva';
+    }
+  };
+
+  document.querySelectorAll('.scad-tab').forEach(b => {
+    b.addEventListener('click', () => { scadFilter = b.dataset.tab; renderScadList(); });
+  });
 
   // ── Nav mese calendario ──
   document.getElementById('calPrevMonth').addEventListener('click', () => {
