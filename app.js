@@ -6,11 +6,15 @@
   };
 
   // ─── Backend Firestore (stessa interfaccia del vecchio Apps Script) ──
-  // Ogni row porta il suo docId (sopravvive alla cache in sessionStorage);
-  // update/delete risolvono rowIndex → docId tramite allRows.
-  function _docIdFor(rowIndex) {
+  // Le spese sono IMPACCHETTATE per anno in users/{uid}/spese_anni/{anno}
+  // (campo json = array di righe con `ord` di inserimento): un caricamento
+  // costa ~1 lettura per anno invece di 1 per spesa — fondamentale per
+  // restare nei limiti gratuiti di Firestore.
+  // Ogni row in memoria porta anno+ord: update/delete localizzano così
+  // la riga dentro il doc dell'anno giusto.
+  function _rowInfo(rowIndex) {
     const row = allRows.find(r => r.rowIndex === rowIndex);
-    return row && row.docId;
+    return row && { anno: String(row.anno), ord: row.ord };
   }
 
   function _rowArrayToDoc([data, costo, descrizione, categoria, tipo, mese, anno]) {
@@ -32,28 +36,65 @@
     return 'users/' + u.uid;
   }
 
+  async function _annoLoad(db, base, anno) {
+    const d = await db.doc(base + '/spese_anni/' + anno).get();
+    return d.exists ? JSON.parse(d.data().json) : [];
+  }
+
+  async function _annoSave(db, base, anno, arr) {
+    const ref = db.doc(base + '/spese_anni/' + anno);
+    if (arr.length) await ref.set({ json: JSON.stringify(arr) });
+    else await ref.delete();
+  }
+
+  // Migrazione una tantum: dai vecchi doc singoli (users/{uid}/spese)
+  // ai doc impacchettati per anno; poi cancella i doc singoli.
+  async function _migratePackIfNeeded(db, base) {
+    const probe = await db.collection(base + '/spese_anni').limit(1).get();
+    if (!probe.empty) return;
+
+    const legacy = await db.collection(base + '/spese').orderBy('ord').get();
+    if (legacy.empty) return;
+
+    const byAnno = {};
+    legacy.docs.forEach((d, i) => {
+      const v = d.data();
+      const a = String(v.anno || '0');
+      if (!byAnno[a]) byAnno[a] = [];
+      byAnno[a].push({ ...v, ord: v.ord ?? i });
+    });
+    for (const anno of Object.keys(byAnno)) {
+      await _annoSave(db, base, anno, byAnno[anno]);
+    }
+    for (let i = 0; i < legacy.docs.length; i += 450) {
+      const batch = db.batch();
+      legacy.docs.slice(i, i + 450).forEach(d => batch.delete(d.ref));
+      await batch.commit();
+    }
+  }
+
   async function asCall(params) {
     const db   = firebase.firestore();
     const base = _userBase();
-    const col  = db.collection(base + '/spese');
     try {
       switch (params.action) {
 
         case 'read_all': {
-          const [snap, muSnap, paSnap, riSnap] = await Promise.all([
-            col.orderBy('ord').get(),
+          await _migratePackIfNeeded(db, base);
+          const [anniSnap, muSnap, paSnap, riSnap] = await Promise.all([
+            db.collection(base + '/spese_anni').get(),
             db.doc(base + '/meta/mutuo').get(),
             db.doc(base + '/meta/patrimonio').get(),
             db.doc(base + '/meta/ricorrenti').get(),
           ]);
-          const rows = snap.docs.map((d, i) => {
-            const v = d.data();
-            return {
-              rowIndex: i + 1, docId: d.id,
-              data: v.data, costo: v.costo, descrizione: v.descrizione,
-              categoria: v.categoria, tipo: v.tipo, mese: v.mese, anno: v.anno,
-            };
-          });
+          const all = [];
+          anniSnap.forEach(d => { all.push(...JSON.parse(d.data().json)); });
+          all.sort((a, b) => a.ord - b.ord);
+          const rows = all.map((v, i) => ({
+            rowIndex: i + 1, ord: v.ord,
+            data: v.data, costo: v.costo, descrizione: v.descrizione,
+            categoria: v.categoria, tipo: v.tipo, mese: v.mese, anno: v.anno,
+          }));
           return {
             status: 'ok',
             rows,
@@ -66,49 +107,71 @@
         case 'append': {
           const doc = _rowArrayToDoc(JSON.parse(params.row));
           doc.ord = Date.now();
-          await col.add(doc);
-          sessionStorage.removeItem('bm_data_cache');
+          const arr = await _annoLoad(db, base, doc.anno);
+          arr.push(doc);
+          await _annoSave(db, base, doc.anno, arr);
+          sessionStorage.removeItem(CACHE_KEY);
           return { status: 'ok' };
         }
 
         case 'update': {
-          const id = _docIdFor(params.rowIndex);
-          if (!id) throw new Error('rowIndex non trovato');
-          await col.doc(id).update(_rowArrayToDoc(JSON.parse(params.row)));
-          sessionStorage.removeItem('bm_data_cache');
+          const info = _rowInfo(params.rowIndex);
+          if (!info) throw new Error('rowIndex non trovato');
+          const doc = _rowArrayToDoc(JSON.parse(params.row));
+          doc.ord = info.ord;
+
+          if (doc.anno === info.anno) {
+            const arr = await _annoLoad(db, base, info.anno);
+            const idx = arr.findIndex(r => r.ord === info.ord);
+            if (idx < 0) throw new Error('riga non trovata');
+            arr[idx] = doc;
+            await _annoSave(db, base, info.anno, arr);
+          } else {
+            // La data è cambiata anno: sposta la riga tra i due doc
+            const vecchio = await _annoLoad(db, base, info.anno);
+            await _annoSave(db, base, info.anno, vecchio.filter(r => r.ord !== info.ord));
+            const nuovo = await _annoLoad(db, base, doc.anno);
+            nuovo.push(doc);
+            await _annoSave(db, base, doc.anno, nuovo);
+          }
+          sessionStorage.removeItem(CACHE_KEY);
           return { status: 'ok' };
         }
 
         case 'delete': {
-          const id = _docIdFor(params.rowIndex);
-          if (!id) throw new Error('rowIndex non trovato');
-          await col.doc(id).delete();
-          sessionStorage.removeItem('bm_data_cache');
+          const info = _rowInfo(params.rowIndex);
+          if (!info) throw new Error('rowIndex non trovato');
+          const arr = await _annoLoad(db, base, info.anno);
+          await _annoSave(db, base, info.anno, arr.filter(r => r.ord !== info.ord));
+          sessionStorage.removeItem(CACHE_KEY);
           return { status: 'ok' };
         }
 
-        // Import CSV: molte righe in batch (max 500 op/batch)
+        // Import CSV: raggruppa per anno, 1 lettura + 1 scrittura per anno
         case 'append_many': {
           const rows = JSON.parse(params.rows);
           let ord = Date.now();
-          for (let i = 0; i < rows.length; i += 450) {
-            const batch = db.batch();
-            rows.slice(i, i + 450).forEach(r => {
-              const doc = _rowArrayToDoc(r);
-              doc.ord = ord++;
-              batch.set(col.doc(), doc);
-            });
-            await batch.commit();
+          const byAnno = {};
+          rows.forEach(r => {
+            const doc = _rowArrayToDoc(r);
+            doc.ord = ord++;
+            if (!byAnno[doc.anno]) byAnno[doc.anno] = [];
+            byAnno[doc.anno].push(doc);
+          });
+          for (const anno of Object.keys(byAnno)) {
+            const arr = await _annoLoad(db, base, anno);
+            arr.push(...byAnno[anno]);
+            await _annoSave(db, base, anno, arr);
           }
-          sessionStorage.removeItem('bm_data_cache');
+          sessionStorage.removeItem(CACHE_KEY);
           return { status: 'ok' };
         }
 
-        // Salva mutuo o patrimonio (doc meta/{nome}, campo json)
+        // Salva mutuo, patrimonio o ricorrenti (doc meta/{nome}, campo json)
         case 'save_meta': {
           if (!['mutuo','patrimonio','ricorrenti'].includes(params.doc)) throw new Error('doc non valido');
           await db.doc(base + '/meta/' + params.doc).set({ json: params.json });
-          sessionStorage.removeItem('bm_data_cache');
+          sessionStorage.removeItem(CACHE_KEY);
           return { status: 'ok' };
         }
 
@@ -374,7 +437,7 @@
 
   let patrimonioRows = [];
   let ricorrentiRows = [];
-  const CACHE_KEY = 'bm_data_cache';
+  const CACHE_KEY = 'bm_data_cache_v2'; // v2: righe con ord (spese impacchettate per anno)
   const CACHE_TTL = 5 * 60 * 1000; // 5 minuti
 
   function saveCache(data) {
