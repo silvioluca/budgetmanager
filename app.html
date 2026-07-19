@@ -23,6 +23,21 @@
 
   <div class="header-right">
     <div class="header-badge" id="yearBadge">2025</div>
+
+    <div class="notif-wrap">
+      <button class="btn-icon" id="notifBtn" title="Notifiche" aria-label="Notifiche">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <path d="M8 2a4 4 0 0 0-4 4v2.5L2.8 11h10.4L12 8.5V6a4 4 0 0 0-4-4z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+          <path d="M6.5 13.5a1.5 1.5 0 0 0 3 0" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+        </svg>
+        <span class="notif-badge" id="notifBadge" style="display:none;">0</span>
+      </button>
+      <div class="notif-panel" id="notifPanel" style="display:none;">
+        <div class="notif-title">Notifiche</div>
+        <div id="notifList"><p class="notif-empty">Nessuna notifica.</p></div>
+      </div>
+    </div>
+
     <button class="btn-icon" id="themeToggle" title="Cambia tema" aria-label="Cambia tema">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
         <circle cx="8" cy="8" r="3.5" stroke="currentColor" stroke-width="1.4"/>
@@ -36,6 +51,13 @@
         <line x1="4.11" y1="11.89" x2="3.05" y2="12.95" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
       </svg>
     </button>
+    <button class="btn-icon" id="logoutBtn" title="Esci" aria-label="Esci">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <path d="M6 2H3.5A1.5 1.5 0 0 0 2 3.5v9A1.5 1.5 0 0 0 3.5 14H6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+        <path d="M10 5l3 3-3 3M13 8H6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </button>
+    <img class="user-avatar" id="userAvatar" alt="" referrerpolicy="no-referrer" style="display:none;">
   </div>
 </header>
 
@@ -144,6 +166,9 @@
 
   </nav>
 
+  <!-- Backdrop sidebar (solo mobile/tablet) -->
+  <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+
   <!-- ─── MAIN ─────────────────────────────────────────────────── -->
   <main class="main" id="mainContent">
 
@@ -151,7 +176,7 @@
     <section class="section active" id="sec-inserimento">
       <div class="section-header">
         <h1 class="section-title">Inserimento spesa</h1>
-        <p class="section-subtitle">Aggiungi una nuova voce al tuo registro su Google Sheets.</p>
+        <p class="section-subtitle">Aggiungi una nuova voce al tuo registro.</p>
       </div>
 
       <div class="form-card">
@@ -201,27 +226,6 @@
 
         <div class="divider"></div>
 
-        <!-- Chi ha pagato + Condivisa -->
-        <div class="form-row">
-          <div class="form-group">
-            <label class="form-label">Chi ha pagato</label>
-            <div class="payer-toggle" id="payerToggle">
-              <button class="payer-btn active" data-payer="Silvio">Silvio</button>
-              <button class="payer-btn" data-payer="Giulia">Giulia</button>
-            </div>
-          </div>
-          <div class="form-group" style="justify-content: flex-end;">
-            <label class="form-label">Spesa condivisa</label>
-            <label class="checkbox-wrap">
-              <input type="checkbox" id="fieldCondivisa">
-              <span class="checkbox-custom"></span>
-              <span class="checkbox-label">Sì, questa spesa è condivisa</span>
-            </label>
-          </div>
-        </div>
-
-        <div class="divider"></div>
-
         <!-- Submit -->
         <div class="form-actions">
           <button class="btn-reset" id="btnReset">Azzera</button>
@@ -229,7 +233,7 @@
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
               <path d="M2 7h10M8 3l4 4-4 4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
-            Salva su Sheets
+            Salva
           </button>
         </div>
 
@@ -246,13 +250,30 @@
           <h1 class="section-title">Elenco spese</h1>
           <p class="section-subtitle">Consulta, filtra e modifica le voci registrate.</p>
         </div>
-        <button class="btn-reload" id="btnReload">
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-            <path d="M12 7A5 5 0 1 1 7 2a5 5 0 0 1 3.54 1.46L12 5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
-            <polyline points="12,2 12,5 9,5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-          Aggiorna
-        </button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn-reload" id="btnCsvImport">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <path d="M7 9V1M4 4l3-3 3 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M2 10v1a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+            </svg>
+            Importa CSV
+          </button>
+          <button class="btn-reload" id="btnCsvExport">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <path d="M7 1v8M4 6l3 3 3-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M2 10v1a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+            </svg>
+            Esporta CSV
+          </button>
+          <button class="btn-reload" id="btnReload">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <path d="M12 7A5 5 0 1 1 7 2a5 5 0 0 1 3.54 1.46L12 5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+              <polyline points="12,2 12,5 9,5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            Aggiorna
+          </button>
+          <input type="file" id="csvFileInput" accept=".csv,text/csv" style="display:none">
+        </div>
       </div>
 
       <!-- Filtri -->
@@ -286,22 +307,6 @@
             <label class="form-label">Categoria</label>
             <select class="filter-select" id="fCategoria"><option value="">Tutte</option></select>
           </div>
-          <div class="filter-group">
-            <label class="form-label">Chi ha pagato</label>
-            <select class="filter-select" id="fPagante">
-              <option value="">Tutti</option>
-              <option value="Silvio">Silvio</option>
-              <option value="Giulia">Giulia</option>
-            </select>
-          </div>
-          <div class="filter-group">
-            <label class="form-label">Condiviso</label>
-            <select class="filter-select" id="fCondiviso">
-              <option value="">Tutti</option>
-              <option value="TRUE">Si</option>
-              <option value="FALSE">No</option>
-            </select>
-          </div>
         </div>
         <div style="display:flex;align-items:center;justify-content:space-between;margin-top:14px;flex-wrap:wrap;gap:8px;">
           <span class="elenco-count" id="elencoCount">— voci</span>
@@ -325,8 +330,6 @@
             <col class="col-categoria">
             <col class="col-tipo">
             <col class="col-costo">
-            <col class="col-pagante">
-            <col class="col-cond">
             <col class="col-azioni">
           </colgroup>
           <thead>
@@ -340,8 +343,6 @@
               <th>Categoria</th>
               <th>Tipo</th>
               <th class="th-costo" style="text-align:right">Costo</th>
-              <th>Pagante</th>
-              <th>Cond.</th>
               <th style="width:72px"></th>
             </tr>
           </thead>
@@ -354,6 +355,10 @@
 
     <!-- ── SEZIONE: Riepilogo annuale ───────────────────────────── -->
     <section class="section" id="sec-annuale">
+      <div class="section-header">
+        <h1 class="section-title">Riepilogo annuale</h1>
+        <p class="section-subtitle">KPI e grafici dell'anno o del mese selezionato.</p>
+      </div>
 
       <!-- Filtri in cima -->
       <div class="dash-filters">
@@ -373,20 +378,12 @@
             <option value="11">Novembre</option><option value="12">Dicembre</option>
           </select>
         </div>
-        <div class="dash-filter-group">
-          <label class="form-label">Di chi?</label>
-          <select class="filter-select" id="paganteDashSelect" style="width:120px;">
-            <option value="">Tutti</option>
-            <option value="Silvio">Silvio</option>
-            <option value="Giulia">Giulia</option>
-          </select>
-        </div>
       </div>
 
       <!-- Layout principale: colonna sinistra + colonna destra -->
       <div class="dash-main">
 
-        <!-- Colonna sinistra: Top10 + Donut categorie + Donut condivise -->
+        <!-- Colonna sinistra: Top10 + Donut categorie -->
         <div class="dash-left">
           <div class="dash-card">
             <div class="dash-card-title">Top 10 uscite</div>
@@ -395,10 +392,6 @@
           <div class="dash-card" style="margin-top:16px;">
             <div class="dash-card-title">Top 5 categorie</div>
             <div class="chart-wrap" style="height:260px;"><canvas id="chartDonut"></canvas></div>
-          </div>
-          <div class="dash-card" style="margin-top:16px;">
-            <div class="dash-card-title">Spese condivise vs personali</div>
-            <div class="chart-wrap" style="height:220px;"><canvas id="chartCondivise"></canvas></div>
           </div>
         </div>
 
@@ -483,6 +476,10 @@
 
     <!-- ── SEZIONE: Riepilogo generale ─────────────────────────── -->
     <section class="section" id="sec-generale">
+      <div class="section-header">
+        <h1 class="section-title">Riepilogo generale</h1>
+        <p class="section-subtitle">Vista storica su tutti gli anni registrati.</p>
+      </div>
 
       <!-- Filtri -->
       <div class="dash-filters">
@@ -492,18 +489,10 @@
             <option value="">Tutti</option>
           </select>
         </div>
-        <div class="dash-filter-group">
-          <label class="form-label">Di chi?</label>
-          <select class="filter-select" id="gPaganteSelect" style="width:120px;">
-            <option value="">Tutti</option>
-            <option value="Silvio">Silvio</option>
-            <option value="Giulia">Giulia</option>
-          </select>
-        </div>
       </div>
 
       <!-- KPI row -->
-      <div class="kpi-grid" style="grid-template-columns:repeat(5,1fr);margin-bottom:20px;">
+      <div class="kpi-grid" style="margin-bottom:20px;">
         <div class="kpi-card">
           <span class="kpi-label">TOT Entrate</span>
           <span class="kpi-value kpi-green" id="gKpiEntrate">—</span>
@@ -586,6 +575,10 @@
 
     <!-- ── SEZIONE: Tabelle ─────────────────────────────────────── -->
     <section class="section" id="sec-tabelle">
+      <div class="section-header">
+        <h1 class="section-title">Tabelle</h1>
+        <p class="section-subtitle">Pivot per categoria e periodo, esportabile in CSV.</p>
+      </div>
 
       <!-- Filtri -->
       <div class="dash-filters" style="margin-bottom:20px;">
@@ -600,14 +593,6 @@
           <label class="form-label">Anno</label>
           <select class="filter-select" id="tabAnnoSelect" style="width:100px;"></select>
         </div>
-        <div class="dash-filter-group">
-          <label class="form-label">Di chi?</label>
-          <select class="filter-select" id="tabPaganteSelect" style="width:120px;">
-            <option value="">Tutti</option>
-            <option value="Silvio">Silvio</option>
-            <option value="Giulia">Giulia</option>
-          </select>
-        </div>
       </div>
 
       <!-- Tab Entrate | Uscite -->
@@ -616,6 +601,7 @@
           <button class="tab-btn active" data-tab="uscite">Uscite</button>
           <button class="tab-btn" data-tab="entrate">Entrate</button>
         </div>
+        <button class="btn-reload" id="btnPivotToggle">Mostra dettaglio ▾</button>
         <button class="btn-csv" id="btnDownloadCsv">
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
             <path d="M7 1v8M4 6l3 3 3-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
@@ -641,20 +627,16 @@
 
     <!-- ── SEZIONE: Utenze domestiche ──────────────────────────── -->
     <section class="section" id="sec-utenze">
+      <div class="section-header">
+        <h1 class="section-title">Utenze domestiche</h1>
+        <p class="section-subtitle">Bollette e utenze: totali, confronti e andamento.</p>
+      </div>
 
       <!-- Filtri -->
       <div class="dash-filters" style="margin-bottom:20px;">
         <div class="dash-filter-group">
           <label class="form-label">Anno</label>
           <select class="filter-select" id="uAnnoSelect" style="width:100px;"></select>
-        </div>
-        <div class="dash-filter-group">
-          <label class="form-label">Di chi?</label>
-          <select class="filter-select" id="uPaganteSelect" style="width:120px;">
-            <option value="">Tutti</option>
-            <option value="Silvio">Silvio</option>
-            <option value="Giulia">Giulia</option>
-          </select>
         </div>
       </div>
 
@@ -700,9 +682,32 @@
 
     <!-- ── SEZIONE: Mutuo ────────────────────────────────────────── -->
     <section class="section" id="sec-mutuo">
+      <div class="section-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+        <div>
+          <h1 class="section-title">Mutuo</h1>
+          <p class="section-subtitle">Piano di ammortamento e stato del rimborso.</p>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn-reload" id="btnMutuoConfig">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <circle cx="7" cy="7" r="2" stroke="currentColor" stroke-width="1.4"/>
+              <path d="M7 1v2M7 11v2M1 7h2M11 7h2M2.8 2.8l1.4 1.4M9.8 9.8l1.4 1.4M11.2 2.8L9.8 4.2M4.2 9.8l-1.4 1.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+            </svg>
+            Configura mutuo
+          </button>
+          <button class="btn-reload" id="btnMutuoCsvImport">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <path d="M7 9V1M4 4l3-3 3 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M2 10v1a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+            </svg>
+            Importa CSV
+          </button>
+          <input type="file" id="mutuoCsvInput" accept=".csv,text/csv" style="display:none">
+        </div>
+      </div>
 
       <!-- KPI -->
-      <div class="kpi-grid" style="grid-template-columns:repeat(5,1fr);margin-bottom:20px;" id="mutuoKpiGrid">
+      <div class="kpi-grid" style="margin-bottom:20px;" id="mutuoKpiGrid">
         <div class="kpi-card">
           <span class="kpi-label">Debito iniziale</span>
           <span class="kpi-value" id="mKpiTotale">—</span>
@@ -745,15 +750,15 @@
         <!-- Destra: tabella rate -->
         <div class="dash-right">
           <div class="dash-card">
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px;">
               <div class="dash-card-title" style="margin-bottom:0;">Piano di ammortamento</div>
-              <div style="display:flex;gap:8px;">
+              <div style="display:flex;gap:8px;flex-wrap:wrap;">
                 <button class="tab-btn active" id="mTabTutte" onclick="mSetTab('tutte')">Tutte</button>
                 <button class="tab-btn" id="mTabPagate" onclick="mSetTab('pagate')">Pagate</button>
                 <button class="tab-btn" id="mTabResiduo" onclick="mSetTab('residue')">Residue</button>
               </div>
             </div>
-            <div style="overflow-x:auto;max-height:600px;overflow-y:auto;">
+            <div id="mTabellaWrap" style="overflow-x:auto;max-height:600px;overflow-y:auto;">
               <table class="pivot-table" id="mTabella"></table>
             </div>
           </div>
@@ -765,6 +770,10 @@
 
     <!-- ── SEZIONE: Cashflow ────────────────────────────────────── -->
     <section class="section" id="sec-cashflow">
+      <div class="section-header">
+        <h1 class="section-title">Cashflow</h1>
+        <p class="section-subtitle">Entrate e uscite mensili con previsione di fine anno.</p>
+      </div>
 
       <!-- Filtro anno -->
       <div class="dash-filters">
@@ -772,18 +781,10 @@
           <label class="form-label">Anno</label>
           <select class="filter-select" id="cfAnnoSelect" style="width:110px;"></select>
         </div>
-        <div class="dash-filter-group">
-          <label class="form-label">Di chi?</label>
-          <select class="filter-select" id="cfPaganteSelect" style="width:120px;">
-            <option value="">Tutti</option>
-            <option value="Silvio">Silvio</option>
-            <option value="Giulia">Giulia</option>
-          </select>
-        </div>
       </div>
 
       <!-- KPI cards -->
-      <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:20px;">
+      <div class="kpi-grid" style="margin-bottom:20px;">
         <div class="kpi-card">
           <span class="kpi-label">Media entrate/mese</span>
           <span class="kpi-value kpi-green" id="cfKpiEntrate">—</span>
@@ -845,9 +846,21 @@
 
     <!-- ── SEZIONE: Patrimonio ──────────────────────────────────── -->
     <section class="section" id="sec-patrimonio">
+      <div class="section-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+        <div>
+          <h1 class="section-title">Patrimonio</h1>
+          <p class="section-subtitle">Attivi, passivi e patrimonio netto.</p>
+        </div>
+        <button class="btn-reload" id="btnPatEdit">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <path d="M10 2l2 2-7.5 7.5H2.5V9.5L10 2z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+          </svg>
+          Modifica patrimonio
+        </button>
+      </div>
 
       <!-- KPI cards -->
-      <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:20px;">
+      <div class="kpi-grid" style="margin-bottom:20px;">
         <div class="kpi-card">
           <span class="kpi-label">Totale attivi</span>
           <span class="kpi-value kpi-green" id="patKpiAttivi">—</span>
@@ -890,6 +903,62 @@
 
     <!-- ── SEZIONE: Calendario ──────────────────────────────────── -->
     <section class="section" id="sec-calendario">
+      <div class="section-header">
+        <h1 class="section-title">Calendario</h1>
+        <p class="section-subtitle">Spese giorno per giorno, andamento nel tempo e ricorrenze.</p>
+      </div>
+
+      <!-- KPI -->
+      <div class="kpi-grid" style="margin-bottom:20px;">
+        <div class="kpi-card">
+          <span class="kpi-label">Spesa in arrivo</span>
+          <span class="kpi-value" id="calKpiProssima" style="font-size:16px;">—</span>
+          <span class="kpi-sub" id="calKpiProssimaSub"></span>
+        </div>
+        <div class="kpi-card">
+          <span class="kpi-label">Operazioni questo mese</span>
+          <span class="kpi-value" id="calKpiOpsCur">—</span>
+          <span class="kpi-sub" id="calKpiOpsCurSub"></span>
+        </div>
+        <div class="kpi-card">
+          <span class="kpi-label">Operazioni mese precedente</span>
+          <span class="kpi-value" id="calKpiOpsPrev">—</span>
+          <span class="kpi-sub" id="calKpiOpsPrevSub"></span>
+        </div>
+      </div>
+
+      <!-- Navigazione mese -->
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+        <button class="btn-reset" id="calPrevMonth" style="padding:6px 14px;">‹ Prec</button>
+        <span id="calMonthLabel" style="font-weight:600;font-size:15px;"></span>
+        <button class="btn-reset" id="calNextMonth" style="padding:6px 14px;">Succ ›</button>
+      </div>
+
+      <!-- Griglia calendario -->
+      <div class="dash-card" style="margin-bottom:20px;">
+        <div id="calGrid" style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;"></div>
+      </div>
+
+      <!-- Prossime spese -->
+      <div class="dash-card" style="margin-bottom:20px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+          <div class="dash-card-title" style="margin-bottom:0;">Spese ricorrenti</div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <div id="ricRangePills" style="display:flex;gap:6px;flex-wrap:wrap;">
+              <div class="u-pill" data-range="7">Settimana</div>
+              <div class="u-pill active" data-range="31">Mese</div>
+              <div class="u-pill" data-range="365">Anno</div>
+            </div>
+            <button class="btn-reload" id="btnRicEdit">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <path d="M10 2l2 2-7.5 7.5H2.5V9.5L10 2z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+              </svg>
+              Gestisci
+            </button>
+          </div>
+        </div>
+        <div id="ricUpcomingList"></div>
+      </div>
 
       <!-- Grafico linee con slider -->
       <div class="dash-card" style="margin-bottom:20px;">
@@ -911,21 +980,9 @@
       </div>
 
       <!-- Heatmap spese -->
-      <div class="dash-card" style="margin-bottom:20px;overflow-x:auto;">
-        <div class="dash-card-title">Heatmap spese (ultimi 12 mesi)</div>
-        <div id="calHeatmap" style="padding:4px 0;"></div>
-      </div>
-
-      <!-- Navigazione mese -->
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
-        <button class="btn-reset" id="calPrevMonth" style="padding:6px 14px;">‹ Prec</button>
-        <span id="calMonthLabel" style="font-weight:600;font-size:15px;"></span>
-        <button class="btn-reset" id="calNextMonth" style="padding:6px 14px;">Succ ›</button>
-      </div>
-
-      <!-- Griglia calendario -->
       <div class="dash-card">
-        <div id="calGrid" style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;"></div>
+        <div class="dash-card-title">Heatmap spese</div>
+        <div id="calHeatmap" style="padding:4px 0;"></div>
       </div>
 
     </section>
@@ -944,6 +1001,163 @@
   </main>
 </div>
 
+<!-- ═══ BOTTOM NAV (solo mobile) ══════════════════════════════════ -->
+<nav class="bottom-nav" id="bottomNav">
+  <div class="bnav-item active" data-section="inserimento">
+    <svg viewBox="0 0 18 18" fill="none">
+      <rect x="2" y="2" width="14" height="14" rx="3" stroke="currentColor" stroke-width="1.4"/>
+      <line x1="9" y1="6" x2="9" y2="12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      <line x1="6" y1="9" x2="12" y2="9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+    </svg>
+    Aggiungi
+  </div>
+  <div class="bnav-item" data-section="elenco">
+    <svg viewBox="0 0 18 18" fill="none">
+      <line x1="3" y1="5" x2="15" y2="5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      <line x1="3" y1="9" x2="15" y2="9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      <line x1="3" y1="13" x2="10" y2="13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+    </svg>
+    Elenco
+  </div>
+  <div class="bnav-item" data-section="calendario">
+    <svg viewBox="0 0 18 18" fill="none">
+      <rect x="2" y="4" width="14" height="12" rx="2" stroke="currentColor" stroke-width="1.4"/>
+      <line x1="6"  y1="2" x2="6"  y2="6"  stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      <line x1="12" y1="2" x2="12" y2="6"  stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      <line x1="2"  y1="8" x2="16" y2="8"  stroke="currentColor" stroke-width="1.4"/>
+    </svg>
+    Calendario
+  </div>
+  <div class="bnav-item" data-section="annuale">
+    <svg viewBox="0 0 18 18" fill="none">
+      <line x1="3"  y1="15" x2="3"  y2="9"  stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+      <line x1="7"  y1="15" x2="7"  y2="5"  stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+      <line x1="11" y1="15" x2="11" y2="11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+      <line x1="15" y1="15" x2="15" y2="3"  stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+    </svg>
+    Annuale
+  </div>
+  <div class="bnav-item" id="bnavMenu">
+    <svg viewBox="0 0 18 18" fill="none">
+      <line x1="3" y1="5"  x2="15" y2="5"  stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      <line x1="3" y1="9"  x2="15" y2="9"  stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      <line x1="3" y1="13" x2="15" y2="13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+    </svg>
+    Altro
+  </div>
+</nav>
+
+<!-- Modal import CSV spese -->
+<div class="modal-overlay" id="csvImportModal" style="display:none;">
+  <div class="modal-box" style="width:420px;max-width:calc(100vw - 32px);">
+    <p class="modal-title">Importa spese da CSV</p>
+    <div class="csv-istruzioni">
+      <p>Il file deve avere queste colonne (una riga per spesa):</p>
+      <code>Data;Costo;Descrizione;Categoria;Tipo</code>
+      <ul>
+        <li><strong>Data</strong>: <code>gg/mm/aaaa</code> oppure <code>aaaa-mm-gg</code></li>
+        <li><strong>Costo</strong>: virgola o punto come decimale (es. <code>12,50</code>)</li>
+        <li><strong>Tipo</strong>: <code>Uscite</code> o <code>Entrate</code></li>
+        <li>Separatore <code>;</code> o <code>,</code> — la prima riga di intestazione è facoltativa</li>
+      </ul>
+      <p>Le righe non valide vengono scartate; prima di scrivere viene chiesta conferma.</p>
+    </div>
+    <div class="modal-actions" style="margin-top:16px;">
+      <button class="btn-reset" id="csvImpAnnulla">Annulla</button>
+      <button class="btn-reload" id="btnCsvTemplate">Scarica modello</button>
+      <button class="btn-submit" id="btnCsvChooseFile">Scegli file…</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal import CSV mutuo -->
+<div class="modal-overlay" id="mutuoCsvModal" style="display:none;">
+  <div class="modal-box" style="width:440px;max-width:calc(100vw - 32px);">
+    <p class="modal-title">Importa piano di ammortamento da CSV</p>
+    <div class="csv-istruzioni">
+      <p>Il file deve avere le stesse colonne della tabella (una riga per rata):</p>
+      <code>Nr;Data;Debito;Debito pagato;Percentuale;Rata;Interesse;Capitale;Pagata</code>
+      <ul>
+        <li><strong>Data</strong>: <code>gg/mm/aaaa</code> oppure <code>aaaa-mm-gg</code></li>
+        <li><strong>Debito</strong>: debito residuo prima della rata</li>
+        <li>Importi con punto o virgola decimale; <strong>Pagata</strong> può restare vuota</li>
+        <li>Separatore <code>;</code> o <code>,</code> — la prima riga di intestazione è facoltativa</li>
+      </ul>
+      <p>L'import sostituisce l'intero piano esistente (viene chiesta conferma).</p>
+    </div>
+    <div class="modal-actions" style="margin-top:16px;">
+      <button class="btn-reset" id="mutuoCsvAnnulla">Annulla</button>
+      <button class="btn-reload" id="btnMutuoCsvTemplate">Scarica modello</button>
+      <button class="btn-submit" id="btnMutuoChooseFile">Scegli file…</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal spese ricorrenti -->
+<div class="modal-overlay" id="ricModal" style="display:none;">
+  <div class="modal-box" style="width:560px;max-width:calc(100vw - 32px);max-height:calc(100vh - 60px);display:flex;flex-direction:column;">
+    <p class="modal-title">Spese ricorrenti</p>
+    <p class="modal-sub" style="margin-bottom:14px;">Nome, importo stimato, frequenza e prossima scadenza. Un mese prima della scadenza compare un promemoria.</p>
+    <div id="ricEditList" style="display:flex;flex-direction:column;gap:8px;overflow-y:auto;flex:1;min-height:0;margin-bottom:12px;"></div>
+    <button class="btn-reload" id="ricAddRow" style="align-self:flex-start;">+ Aggiungi ricorrenza</button>
+    <div class="modal-actions" style="margin-top:16px;">
+      <button class="btn-reset" id="ricAnnulla">Annulla</button>
+      <button class="btn-submit" id="ricSalva">Salva</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal configurazione mutuo -->
+<div class="modal-overlay" id="mutuoModal" style="display:none;">
+  <div class="modal-box" style="width:380px;max-width:calc(100vw - 32px);">
+    <p class="modal-title">Configura mutuo</p>
+    <p class="modal-sub" style="margin-bottom:16px;">Genera il piano di ammortamento (rata costante). Sostituisce il piano esistente.</p>
+    <div style="display:flex;flex-direction:column;gap:12px;">
+      <div class="form-group">
+        <label class="form-label">Debito iniziale (€)</label>
+        <input class="form-input" type="number" id="mcDebito" min="0" step="0.01" placeholder="es. 120000">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Rata mensile (€)</label>
+        <input class="form-input" type="number" id="mcRata" min="0" step="0.01" placeholder="es. 550">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Tasso annuo (%)</label>
+        <input class="form-input" type="number" id="mcTasso" min="0" step="0.01" placeholder="es. 2.5">
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Giorno di pagamento</label>
+          <input class="form-input" type="number" id="mcGiorno" min="1" max="28" value="1">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Prima rata</label>
+          <input class="form-input" type="month" id="mcPrimaRata">
+        </div>
+      </div>
+      <div class="form-feedback" id="mcFeedback"></div>
+    </div>
+    <div class="modal-actions" style="margin-top:16px;">
+      <button class="btn-reset" id="mcAnnulla">Annulla</button>
+      <button class="btn-submit" id="mcGenera">Genera piano</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal modifica patrimonio -->
+<div class="modal-overlay" id="patModal" style="display:none;">
+  <div class="modal-box" style="width:520px;max-width:calc(100vw - 32px);max-height:calc(100vh - 60px);display:flex;flex-direction:column;">
+    <p class="modal-title">Modifica patrimonio</p>
+    <p class="modal-sub" style="margin-bottom:14px;">Attivi e passivi: nome, tipologia e valore attuale.</p>
+    <div id="patEditList" style="display:flex;flex-direction:column;gap:8px;overflow-y:auto;flex:1;min-height:0;margin-bottom:12px;"></div>
+    <button class="btn-reload" id="patAddRow" style="align-self:flex-start;">+ Aggiungi voce</button>
+    <div class="modal-actions" style="margin-top:16px;">
+      <button class="btn-reset" id="patAnnulla">Annulla</button>
+      <button class="btn-submit" id="patSalva">Salva</button>
+    </div>
+  </div>
+</div>
+
 <!-- Modal eliminazione — fuori dal layout per evitare conflitti con position:fixed -->
 <div class="modal-overlay" id="deleteModal" style="display:none;">
   <div class="modal-box">
@@ -957,11 +1171,18 @@
 </div>
 
 
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<script src="firebase-init.js"></script>
 <script>
   // ─── Auth guard ───────────────────────────────────────────────
-  if (sessionStorage.getItem('bm_auth') !== '1') {
-    window.location.replace('login.html');
-  }
+  bmAuthReady.then(user => {
+    if (!bmIsAllowed(user)) {
+      if (user) firebase.auth().signOut();
+      window.location.replace('login.html');
+    }
+  });
 </script>
 <script src="app.js"></script>
 </html>

@@ -5,34 +5,119 @@
     activeSection: 'inserimento',
   };
 
-  // ─── Apps Script endpoint (JSONP — aggira CORS) ───────────────
-  const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyEUsipvNPc7dEXWCMYntN-hcQeBuBCnEYTbNagF3Xeg1gfU_jHYcRilxZseSxvoi32Eg/exec';
+  // ─── Backend Firestore (stessa interfaccia del vecchio Apps Script) ──
+  // Ogni row porta il suo docId (sopravvive alla cache in sessionStorage);
+  // update/delete risolvono rowIndex → docId tramite allRows.
+  function _docIdFor(rowIndex) {
+    const row = allRows.find(r => r.rowIndex === rowIndex);
+    return row && row.docId;
+  }
 
-  function asCall(params) {
-    return new Promise((resolve, reject) => {
-      const cbName = '_bm_cb_' + Date.now();
-      const script = document.createElement('script');
-      const timeout = setTimeout(() => {
-        cleanup();
-        reject(new Error('Timeout'));
-      }, 15000);
+  function _rowArrayToDoc([data, costo, descrizione, categoria, tipo, mese, anno]) {
+    return {
+      data: String(data),
+      costo: String(costo),
+      descrizione: String(descrizione),
+      categoria: String(categoria),
+      tipo: String(tipo),
+      mese: String(mese),
+      anno: String(anno),
+    };
+  }
 
-      window[cbName] = (data) => {
-        cleanup();
-        resolve(data);
-      };
+  // Dati per-utente: ogni account ha il suo spazio users/{uid}
+  function _userBase() {
+    const u = firebase.auth().currentUser;
+    if (!u) throw new Error('Utente non autenticato');
+    return 'users/' + u.uid;
+  }
 
-      function cleanup() {
-        clearTimeout(timeout);
-        delete window[cbName];
-        if (script.parentNode) script.parentNode.removeChild(script);
+  async function asCall(params) {
+    const db   = firebase.firestore();
+    const base = _userBase();
+    const col  = db.collection(base + '/spese');
+    try {
+      switch (params.action) {
+
+        case 'read_all': {
+          const [snap, muSnap, paSnap, riSnap] = await Promise.all([
+            col.orderBy('ord').get(),
+            db.doc(base + '/meta/mutuo').get(),
+            db.doc(base + '/meta/patrimonio').get(),
+            db.doc(base + '/meta/ricorrenti').get(),
+          ]);
+          const rows = snap.docs.map((d, i) => {
+            const v = d.data();
+            return {
+              rowIndex: i + 1, docId: d.id,
+              data: v.data, costo: v.costo, descrizione: v.descrizione,
+              categoria: v.categoria, tipo: v.tipo, mese: v.mese, anno: v.anno,
+            };
+          });
+          return {
+            status: 'ok',
+            rows,
+            mutuo:      muSnap.exists ? JSON.parse(muSnap.data().json) : [],
+            patrimonio: paSnap.exists ? JSON.parse(paSnap.data().json) : [],
+            ricorrenti: riSnap.exists ? JSON.parse(riSnap.data().json) : [],
+          };
+        }
+
+        case 'append': {
+          const doc = _rowArrayToDoc(JSON.parse(params.row));
+          doc.ord = Date.now();
+          await col.add(doc);
+          sessionStorage.removeItem('bm_data_cache');
+          return { status: 'ok' };
+        }
+
+        case 'update': {
+          const id = _docIdFor(params.rowIndex);
+          if (!id) throw new Error('rowIndex non trovato');
+          await col.doc(id).update(_rowArrayToDoc(JSON.parse(params.row)));
+          sessionStorage.removeItem('bm_data_cache');
+          return { status: 'ok' };
+        }
+
+        case 'delete': {
+          const id = _docIdFor(params.rowIndex);
+          if (!id) throw new Error('rowIndex non trovato');
+          await col.doc(id).delete();
+          sessionStorage.removeItem('bm_data_cache');
+          return { status: 'ok' };
+        }
+
+        // Import CSV: molte righe in batch (max 500 op/batch)
+        case 'append_many': {
+          const rows = JSON.parse(params.rows);
+          let ord = Date.now();
+          for (let i = 0; i < rows.length; i += 450) {
+            const batch = db.batch();
+            rows.slice(i, i + 450).forEach(r => {
+              const doc = _rowArrayToDoc(r);
+              doc.ord = ord++;
+              batch.set(col.doc(), doc);
+            });
+            await batch.commit();
+          }
+          sessionStorage.removeItem('bm_data_cache');
+          return { status: 'ok' };
+        }
+
+        // Salva mutuo o patrimonio (doc meta/{nome}, campo json)
+        case 'save_meta': {
+          if (!['mutuo','patrimonio','ricorrenti'].includes(params.doc)) throw new Error('doc non valido');
+          await db.doc(base + '/meta/' + params.doc).set({ json: params.json });
+          sessionStorage.removeItem('bm_data_cache');
+          return { status: 'ok' };
+        }
+
+        default:
+          throw new Error('Azione sconosciuta: ' + params.action);
       }
-
-      const allParams = { ...params, callback: cbName };
-      script.src = APPS_SCRIPT_URL + '?' + new URLSearchParams(allParams).toString();
-      script.onerror = () => { cleanup(); reject(new Error('Script error')); };
-      document.head.appendChild(script);
-    });
+    } catch (e) {
+      return { status: 'error', message: e.message };
+    }
   }
 
   // ─── Elementi DOM ─────────────────────────────────────────────
@@ -51,20 +136,31 @@
 
   hamburgerBtn.addEventListener('click', () => toggleSidebar());
 
-  // ─── Navigazione sezioni ──────────────────────────────────────
-  navItems.forEach(item => {
-    item.addEventListener('click', () => {
-      const target = item.dataset.section;
-      if (target === state.activeSection) return;
+  // Mobile: pulsante "Altro" della bottom-nav e backdrop
+  document.getElementById('bnavMenu').addEventListener('click', () => toggleSidebar());
+  document.getElementById('sidebarBackdrop').addEventListener('click', () => toggleSidebar(false));
 
-      navItems.forEach(n => n.classList.remove('active'));
-      sections.forEach(s => s.classList.remove('active'));
+  // ─── Navigazione sezioni (sidebar + bottom-nav) ───────────────
+  const bnavItems = document.querySelectorAll('.bnav-item[data-section]');
 
-      item.classList.add('active');
-      document.getElementById('sec-' + target).classList.add('active');
-      state.activeSection = target;
-    });
-  });
+  function showSection(target) {
+    if (target === state.activeSection) return;
+
+    navItems.forEach(n => n.classList.toggle('active', n.dataset.section === target));
+    bnavItems.forEach(n => n.classList.toggle('active', n.dataset.section === target));
+    sections.forEach(s => s.classList.remove('active'));
+
+    document.getElementById('sec-' + target).classList.add('active');
+    state.activeSection = target;
+    renderActiveSection(target);
+
+    // Mobile/tablet: chiudi la sidebar dopo la scelta
+    if (window.matchMedia('(max-width: 1024px)').matches) toggleSidebar(false);
+    window.scrollTo(0, 0);
+  }
+
+  navItems.forEach(item  => item.addEventListener('click', () => showSection(item.dataset.section)));
+  bnavItems.forEach(item => item.addEventListener('click', () => showSection(item.dataset.section)));
 
   // ─── Tema ─────────────────────────────────────────────────────
   themeToggle.addEventListener('click', () => {
@@ -107,7 +203,7 @@
   const CATEGORIE = {
     uscita: {
       principali: ['Abbonamenti','Auto','Cibo','Mutuo','Previdenza c.','Svago','Spesa'],
-      extra: ['Acquisti online','Altro','Beauty','Bolletta gas','Bolletta luce','Bolletta rifiuti','Bolletta wifi','Casa','Regali','Riscaldamento','Scarpe','Spese condominiali','Spese mediche','Telefonia','Trasporti','Vestiti','Viaggi']
+      extra: ['Acquisti online','Altro','Bolletta gas','Bolletta luce','Bolletta rifiuti','Bolletta wifi','Casa','Regali','Riscaldamento','Spese condominiali','Spese mediche','Telefonia','Trasporti','Vestiti','Viaggi']
     },
     entrata: {
       principali: ['Stipendio','Affitto','Regali','Ripetizioni','Trasferimenti','Altro'],
@@ -117,11 +213,9 @@
 
   let currentType = 'uscita';
   let selectedCategory = '';
-  let selectedPayer = 'Silvio';
 
   const categoryGrid = document.getElementById('categoryGrid');
   const typeToggle   = document.getElementById('typeToggle');
-  const payerToggle  = document.getElementById('payerToggle');
   const btnSubmit    = document.getElementById('btnSubmit');
   const btnReset     = document.getElementById('btnReset');
   const formFeedback = document.getElementById('formFeedback');
@@ -186,14 +280,6 @@
     btn.addEventListener('click', () => setType(btn.dataset.type));
   });
 
-  payerToggle.querySelectorAll('.payer-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      payerToggle.querySelectorAll('.payer-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      selectedPayer = btn.dataset.payer;
-    });
-  });
-
   function showFeedback(msg, type) {
     formFeedback.textContent = msg;
     formFeedback.className = `form-feedback visible ${type}`;
@@ -204,7 +290,6 @@
     document.getElementById('fieldData').valueAsDate = new Date();
     document.getElementById('fieldCosto').value = '';
     document.getElementById('fieldDescrizione').value = '';
-    document.getElementById('fieldCondivisa').checked = false;
     selectedCategory = '';
     renderCategories();
   }
@@ -215,7 +300,6 @@
     const data        = document.getElementById('fieldData').value;
     const costo       = document.getElementById('fieldCosto').value;
     const descrizione = document.getElementById('fieldDescrizione').value.trim();
-    const condivisa   = document.getElementById('fieldCondivisa').checked;
 
     if (!data || !costo || !descrizione || !selectedCategory) {
       showFeedback('⚠ Compila tutti i campi obbligatori.', 'error');
@@ -229,7 +313,7 @@
     const costoNum      = parseFloat(costo.replace(',', '.'));
     const costoFmt      = costoNum.toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-    const row = [data, costoFmt, descrizione, selectedCategory, tipo, mese, anno, selectedPayer, condivisa ? 'TRUE' : 'FALSE'];
+    const row = [data, costoFmt, descrizione, selectedCategory, tipo, mese, anno];
 
     btnSubmit.textContent = 'Salvataggio…';
     btnSubmit.disabled = true;
@@ -237,12 +321,12 @@
     try {
       const json = await asCall({ action: 'append', row: JSON.stringify(row) });
       if (json.status !== 'ok') throw new Error(json.message);
-      showFeedback('✓ Voce salvata correttamente su Google Sheets.', 'success');
+      showFeedback('✓ Voce salvata correttamente.', 'success');
       resetForm();
     } catch(e) {
       showFeedback('✗ Errore durante il salvataggio. Riprova.', 'error');
     } finally {
-      btnSubmit.innerHTML = `<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 7h10M8 3l4 4-4 4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg> Salva su Sheets`;
+      btnSubmit.innerHTML = `<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2 7h10M8 3l4 4-4 4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg> Salva`;
       btnSubmit.disabled = false;
     }
   });
@@ -289,12 +373,14 @@
   })();
 
   let patrimonioRows = [];
+  let ricorrentiRows = [];
   const CACHE_KEY = 'bm_data_cache';
   const CACHE_TTL = 5 * 60 * 1000; // 5 minuti
 
   function saveCache(data) {
     try {
-      sessionStorage.setItem(CACHE_KEY, JSON.stringify({ ts: Date.now(), data }));
+      const uid = firebase.auth().currentUser?.uid;
+      sessionStorage.setItem(CACHE_KEY, JSON.stringify({ ts: Date.now(), uid, data }));
     } catch(e) {}
   }
 
@@ -302,8 +388,9 @@
     try {
       const raw = sessionStorage.getItem(CACHE_KEY);
       if (!raw) return null;
-      const { ts, data } = JSON.parse(raw);
+      const { ts, uid, data } = JSON.parse(raw);
       if (Date.now() - ts > CACHE_TTL) { sessionStorage.removeItem(CACHE_KEY); return null; }
+      if (uid !== firebase.auth().currentUser?.uid) { sessionStorage.removeItem(CACHE_KEY); return null; }
       return data;
     } catch(e) { return null; }
   }
@@ -312,7 +399,9 @@
     allRows        = json.rows       || [];
     mAllRate       = json.mutuo      || [];
     patrimonioRows = json.patrimonio || [];
+    ricorrentiRows = json.ricorrenti || [];
     loadingBanner.remove();
+    updateNotifiche();
     const s = state.activeSection;
     if (s === 'elenco')     { populateAnnoFilter(); applyFilters(); }
     if (s === 'annuale')    renderDashAnnuale();
@@ -371,16 +460,12 @@
     const fMese     = document.getElementById('fMese').value;
     const fTipo     = document.getElementById('fTipo').value;
     const fCat      = document.getElementById('fCategoria').value;
-    const fPag      = document.getElementById('fPagante').value;
-    const fCond     = document.getElementById('fCondiviso').value;
 
     const filtered = allRows.filter(r => {
       if (fAnno && r.anno !== fAnno) return false;
       if (fMese && String(r.mese) !== fMese) return false;
       if (fTipo && r.tipo !== fTipo) return false;
       if (fCat  && r.categoria !== fCat) return false;
-      if (fPag  && r.pagante !== fPag) return false;
-      if (fCond && r.condiviso.toUpperCase() !== fCond) return false;
       return true;
     });
 
@@ -421,17 +506,8 @@
       const tr = document.createElement('tr');
       tr.dataset.rowIndex = r.rowIndex;
       const isUscita = r.tipo === 'Uscite';
-      const condLabel = r.condiviso.toUpperCase() === 'TRUE' ? 'Sì' : 'No';
 
-      tr.innerHTML = `
-        <td>${formatDataDisplay(r.data)}</td>
-        <td>${escHtml(r.descrizione)}</td>
-        <td><span class="tag tag-neutral">${escHtml(r.categoria)}</span></td>
-        <td><span class="tag ${isUscita ? 'tag-red' : 'tag-green'}">${escHtml(r.tipo)}</span></td>
-        <td class="td-costo ${isUscita ? 'uscita' : 'entrata'}">${escHtml(r.costo)} €</td>
-        <td>${escHtml(r.pagante)}</td>
-        <td>${condLabel}</td>
-        <td>
+      const actionsHtml = `
           <div class="td-actions">
             <button class="btn-row edit" title="Modifica" onclick="startEdit(this, ${r.rowIndex})">
               <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M9 2l2 2-7 7H2V9L9 2z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
@@ -439,9 +515,40 @@
             <button class="btn-row delete" title="Elimina" onclick="askDelete(${r.rowIndex}, '${escAttr(r.descrizione)}', '${escAttr(r.costo)}')">
               <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M2 3.5h9M5 3.5V2.5h3v1M4 3.5l.5 7h4l.5-7" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </button>
+          </div>`;
+
+      tr.innerHTML = `
+        <td>${formatDataDisplay(r.data)}</td>
+        <td>${escHtml(r.descrizione)}</td>
+        <td><span class="tag tag-neutral">${escHtml(r.categoria)}</span></td>
+        <td><span class="tag ${isUscita ? 'tag-red' : 'tag-green'}">${escHtml(r.tipo)}</span></td>
+        <td class="td-costo ${isUscita ? 'uscita' : 'entrata'}">${escHtml(r.costo)} €</td>
+        <td>${actionsHtml}</td>`;
+      speseBody.appendChild(tr);
+
+      // Riga dettaglio (visibile solo su mobile, espansa al tap sulla riga)
+      const trD = document.createElement('tr');
+      trD.className = 'm-detail';
+      trD.innerHTML = `
+        <td colspan="3">
+          <div class="m-detail-row">
+            <span class="m-detail-label">Descrizione</span>
+            <span class="m-detail-val">${escHtml(r.descrizione)}</span>
+          </div>
+          <div class="m-detail-row">
+            <span class="m-detail-label">Tipo</span>
+            <span class="m-detail-val"><span class="tag ${isUscita ? 'tag-red' : 'tag-green'}">${escHtml(r.tipo)}</span></span>
+            <span class="m-detail-acts">${actionsHtml}</span>
           </div>
         </td>`;
-      speseBody.appendChild(tr);
+      speseBody.appendChild(trD);
+
+      tr.addEventListener('click', (e) => {
+        if (!window.matchMedia('(max-width: 768px)').matches) return;
+        if (e.target.closest('button') || tr.classList.contains('editing')) return;
+        tr.classList.toggle('m-open');
+        trD.classList.toggle('m-visible');
+      });
     });
   }
 
@@ -462,20 +569,21 @@
     if (!row) return;
     tr.classList.add('editing');
 
+    // Mobile: chiudi la riga dettaglio mentre si modifica
+    tr.classList.remove('m-open');
+    const nx = tr.nextElementSibling;
+    if (nx && nx.classList.contains('m-detail')) nx.classList.remove('m-visible');
+
     const allCat = [...CATEGORIE.uscita.principali, ...CATEGORIE.uscita.extra, ...CATEGORIE.entrata.principali].filter((v,i,a)=>a.indexOf(v)===i).sort();
     const catOpts = allCat.map(c => `<option value="${c}" ${c===row.categoria?'selected':''}>${c}</option>`).join('');
     const tipoOpts = ['Uscite','Entrate'].map(t => `<option value="${t}" ${t===row.tipo?'selected':''}>${t}</option>`).join('');
-    const pagOpts  = ['Silvio','Giulia'].map(p => `<option value="${p}" ${p===row.pagante?'selected':''}>${p}</option>`).join('');
-    const condOpts = [['TRUE','Sì'],['FALSE','No']].map(([v,l]) => `<option value="${v}" ${row.condiviso.toUpperCase()===v?'selected':''}>${l}</option>`).join('');
 
     tr.cells[0].innerHTML = `<input class="inline-input" id="ei-data-${rowIndex}" type="date" value="${row.data}" style="width:130px">`;
     tr.cells[1].innerHTML = `<input class="inline-input" id="ei-desc-${rowIndex}" type="text" value="${escHtml(row.descrizione)}" style="min-width:140px">`;
     tr.cells[2].innerHTML = `<select class="inline-select" id="ei-cat-${rowIndex}">${catOpts}</select>`;
     tr.cells[3].innerHTML = `<select class="inline-select" id="ei-tipo-${rowIndex}">${tipoOpts}</select>`;
     tr.cells[4].innerHTML = `<input class="inline-input" id="ei-costo-${rowIndex}" type="text" value="${row.costo}" style="width:80px;text-align:right">`;
-    tr.cells[5].innerHTML = `<select class="inline-select" id="ei-pag-${rowIndex}">${pagOpts}</select>`;
-    tr.cells[6].innerHTML = `<select class="inline-select" id="ei-cond-${rowIndex}">${condOpts}</select>`;
-    tr.cells[7].innerHTML = `
+    tr.cells[5].innerHTML = `
       <div class="td-actions">
         <button class="btn-row save" title="Salva" onclick="saveEdit(${rowIndex})">
           <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M2 7l3.5 3.5L11 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -496,8 +604,6 @@
     const cat        = document.getElementById(`ei-cat-${rowIndex}`).value;
     const tipo       = document.getElementById(`ei-tipo-${rowIndex}`).value;
     const costoRaw   = document.getElementById(`ei-costo-${rowIndex}`).value.replace(',','.');
-    const pag        = document.getElementById(`ei-pag-${rowIndex}`).value;
-    const cond       = document.getElementById(`ei-cond-${rowIndex}`).value;
 
     const dateObj  = new Date(data);
     const mese     = dateObj.getMonth() + 1;
@@ -505,10 +611,10 @@
     const costoFmt = parseFloat(costoRaw).toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2});
 
     try {
-      const json = await asCall({ action: 'update', rowIndex, row: JSON.stringify([data, costoFmt, desc, cat, tipo, mese, anno, pag, cond]) });
+      const json = await asCall({ action: 'update', rowIndex, row: JSON.stringify([data, costoFmt, desc, cat, tipo, mese, anno]) });
       if (json.status !== 'ok') throw new Error(json.message);
       const idx = allRows.findIndex(r => r.rowIndex === rowIndex);
-      if (idx > -1) allRows[idx] = { rowIndex, data, costo: costoFmt, descrizione: desc, categoria: cat, tipo, mese: String(mese), anno: String(anno), pagante: pag, condiviso: cond };
+      if (idx > -1) allRows[idx] = { ...allRows[idx], data, costo: costoFmt, descrizione: desc, categoria: cat, tipo, mese: String(mese), anno: String(anno) };
       applyFilters();
     } catch(e) {
       alert('Errore nel salvataggio. Riprova.');
@@ -545,12 +651,12 @@
   });
 
   // Filtri: listener
-  ['fAnno','fMese','fTipo','fCategoria','fPagante','fCondiviso'].forEach(id => {
+  ['fAnno','fMese','fTipo','fCategoria'].forEach(id => {
     document.getElementById(id).addEventListener('change', applyFilters);
   });
 
   document.getElementById('btnClearFilters').addEventListener('click', () => {
-    ['fAnno','fMese','fTipo','fCategoria','fPagante','fCondiviso'].forEach(id => {
+    ['fAnno','fMese','fTipo','fCategoria'].forEach(id => {
       document.getElementById(id).value = '';
     });
     applyFilters();
@@ -567,12 +673,12 @@
   const MESI_LABEL    = ['Gen','Feb','Mar','Apr','Mag','Giu','Lug','Ago','Set','Ott','Nov','Dic'];
   const MESI_COMPLETI = ['Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno','Luglio','Agosto','Settembre','Ottobre','Novembre','Dicembre'];
 
-  let chartMensile = null, chartConfronto = null, chartDonut = null, chartWaterfall = null, chartCondivise = null;
+  let chartMensile = null, chartConfronto = null, chartDonut = null, chartWaterfall = null;
 
   function destroyCharts() {
-    [chartMensile, chartConfronto, chartDonut, chartWaterfall, chartCondivise].forEach(c => { if (c) { c.destroy(); } });
-    chartMensile = chartConfronto = chartDonut = chartWaterfall = chartCondivise = null;
-    ['chartMensile','chartConfronto','chartDonut','chartWaterfall','chartCondivise'].forEach(id => {
+    [chartMensile, chartConfronto, chartDonut, chartWaterfall].forEach(c => { if (c) { c.destroy(); } });
+    chartMensile = chartConfronto = chartDonut = chartWaterfall = null;
+    ['chartMensile','chartConfronto','chartDonut','chartWaterfall'].forEach(id => {
       const old = document.getElementById(id);
       if (old) { const nc = document.createElement('canvas'); nc.id = id; old.parentNode.replaceChild(nc, old); }
     });
@@ -591,7 +697,6 @@
     return {
       anno:    document.getElementById('annoDashSelect').value,
       mese:    document.getElementById('meseDashSelect').value,
-      pagante: document.getElementById('paganteDashSelect').value,
     };
   }
 
@@ -603,11 +708,10 @@
     if (anni.includes(cur)) sel.value = cur;
   }
 
-  function filterRows(rows, { anno, mese, pagante }) {
+  function filterRows(rows, { anno, mese }) {
     return rows.filter(r => {
-      if (anno    && r.anno    !== anno)    return false;
-      if (mese    && String(r.mese) !== mese) return false;
-      if (pagante && r.pagante !== pagante) return false;
+      if (anno && r.anno !== anno) return false;
+      if (mese && String(r.mese) !== mese) return false;
       return true;
     });
   }
@@ -618,7 +722,7 @@
     buildDash();
   }
 
-  ['annoDashSelect','meseDashSelect','paganteDashSelect'].forEach(id => {
+  ['annoDashSelect','meseDashSelect'].forEach(id => {
     document.getElementById(id).addEventListener('change', buildDash);
   });
 
@@ -847,44 +951,6 @@
       });
     }
 
-    // ── Donut spese condivise vs personali ──
-    {
-      const totCond = uscite.filter(r => r.condiviso.toUpperCase()==='TRUE').reduce((s,r) => s+parseCosto(r.costo), 0);
-      const totPers = uscite.filter(r => r.condiviso.toUpperCase()!=='TRUE').reduce((s,r) => s+parseCosto(r.costo), 0);
-      chartCondivise = new Chart(document.getElementById('chartCondivise'), {
-        type: 'doughnut',
-        data: {
-          labels: ['Condivise', 'Personali'],
-          datasets: [{ data: [totCond, totPers], backgroundColor: ['#5b9bff','#ff3b3b'], borderWidth: 0, hoverOffset: 6 }]
-        },
-        options: {
-          responsive: true, maintainAspectRatio: false, cutout: '60%',
-          plugins: {
-            legend: { position: 'bottom', labels: { boxWidth: 12, padding: 16, font: { size: 12 } } },
-            tooltip: { callbacks: { label: ctx => ' ' + fmtEur(ctx.parsed) } }
-          }
-        },
-        plugins: [{
-          id: 'centerLabel',
-          afterDraw(chart) {
-            const { ctx, chartArea: { width, height, left, top } } = chart;
-            const cx = left + width/2, cy = top + height/2 - 14;
-            const tot = totCond + totPers;
-            const pct = tot > 0 ? (totCond/tot*100).toFixed(0)+'%' : '—';
-            ctx.save();
-            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-            ctx.fillStyle = '#5b9bff';
-            ctx.font = 'bold 20px DM Sans, sans-serif';
-            ctx.fillText(pct, cx, cy);
-            ctx.fillStyle = isDark ? '#888' : '#666';
-            ctx.font = '11px DM Sans, sans-serif';
-            ctx.fillText('condivise', cx, cy + 20);
-            ctx.restore();
-          }
-        }]
-      });
-    }
-
     // ── Heatmap mese × categoria ──
     {
       // Categorie con almeno una spesa nel periodo
@@ -939,7 +1005,7 @@
         const g = d.getDate() - 1; if (g >= 0 && g < giorniMese) byDay[g] += parseCosto(r.costo);
       });
 
-      filterRows(allRows.filter(r => r.tipo === 'Uscite'), { anno: prevAnno, mese: String(prevMese), pagante: f.pagante }).forEach(r => {
+      filterRows(allRows.filter(r => r.tipo === 'Uscite'), { anno: prevAnno, mese: String(prevMese) }).forEach(r => {
         const d = new Date(r.data); if (isNaN(d)) return;
         const g = d.getDate() - 1; const dMax = new Date(parseInt(prevAnno), prevMese, 0).getDate();
         if (g >= 0 && g < Math.min(giorniMese, dMax)) byDayPrev[g] += parseCosto(r.costo);
@@ -960,7 +1026,7 @@
       const usc12Curr = Array(12).fill(0);
       const usc12Prev = Array(12).fill(0);
       uscite.forEach(r => { const m = parseInt(r.mese); if (m>=1&&m<=12) usc12Curr[m-1] += parseCosto(r.costo); });
-      filterRows(allRows.filter(r=>r.tipo==='Uscite'), { anno: prevAnno, mese: '', pagante: f.pagante })
+      filterRows(allRows.filter(r=>r.tipo==='Uscite'), { anno: prevAnno, mese: '' })
         .forEach(r => { const m = parseInt(r.mese); if (m>=1&&m<=12) usc12Prev[m-1] += parseCosto(r.costo); });
       let cumC = 0, cumP = 0;
       dataCurr  = usc12Curr.map(v => { cumC += v; return cumC; });
@@ -1073,7 +1139,7 @@
     if (cur) sel.value = cur;
   }
 
-  ['gAnnoSelect','gPaganteSelect'].forEach(id => {
+  ['gAnnoSelect'].forEach(id => {
     document.getElementById(id).addEventListener('change', renderDashGenerale);
   });
 
@@ -1126,12 +1192,10 @@
     populateGAnnoSelect();
     destroyGeneraleCharts();
 
-    const fAnno    = document.getElementById('gAnnoSelect').value;
-    const fPagante = document.getElementById('gPaganteSelect').value;
+    const fAnno = document.getElementById('gAnnoSelect').value;
 
     const filtered = allRows.filter(r => {
-      if (fAnno    && r.anno    !== fAnno)    return false;
-      if (fPagante && r.pagante !== fPagante) return false;
+      if (fAnno && r.anno !== fAnno) return false;
       return true;
     });
 
@@ -1461,13 +1525,11 @@
 
     const modo    = document.getElementById('tabModoSelect').value;
     const annoSel = document.getElementById('tabAnnoSelect').value;
-    const pag     = document.getElementById('tabPaganteSelect').value;
 
     document.getElementById('tabAnnoWrap').style.display = modo==='anno' ? 'flex' : 'none';
 
     const filtered = allRows.filter(r => {
       if (modo==='anno' && r.anno !== annoSel) return false;
-      if (pag && r.pagante !== pag) return false;
       return true;
     });
 
@@ -1478,18 +1540,45 @@
       document.getElementById('pivotUscite').innerHTML  = buildPivotTutti(filtered, 'Uscite');
       document.getElementById('pivotEntrate').innerHTML = buildPivotTutti(filtered, 'Entrate');
     }
+    applyPivotState();
   }
+
+  // Pivot collassata di default: visibile solo la riga Totale; toggle per il dettaglio
+  let pivotExpanded = false;
+
+  function applyPivotState() {
+    ['pivotUscite','pivotEntrate'].forEach(id => {
+      document.getElementById(id).classList.toggle('pv-collapsed', !pivotExpanded);
+    });
+    document.getElementById('btnPivotToggle').textContent =
+      pivotExpanded ? 'Nascondi dettaglio ▴' : 'Mostra dettaglio ▾';
+  }
+
+  document.getElementById('btnPivotToggle').addEventListener('click', () => {
+    pivotExpanded = !pivotExpanded;
+    applyPivotState();
+  });
+
+  // Mutuo: su mobile le righe del piano si espandono al tap (delegazione)
+  document.getElementById('mTabella').addEventListener('click', (e) => {
+    if (!window.matchMedia('(max-width: 768px)').matches) return;
+    const tr = e.target.closest('tr');
+    if (!tr || tr.classList.contains('m-detail') || !tr.parentElement.matches('tbody')) return;
+    const det = tr.nextElementSibling;
+    if (det && det.classList.contains('m-detail')) {
+      tr.classList.toggle('m-open');
+      det.classList.toggle('m-visible');
+    }
+  });
 
   // ── Export CSV ──
   document.getElementById('btnDownloadCsv').addEventListener('click', () => {
     const modo    = document.getElementById('tabModoSelect').value;
     const annoSel = document.getElementById('tabAnnoSelect').value;
-    const pag     = document.getElementById('tabPaganteSelect').value;
     const activeTab = document.querySelector('.tab-btn.active')?.dataset.tab || 'uscite';
 
     const filtered = allRows.filter(r => {
       if (modo==='anno' && r.anno !== annoSel) return false;
-      if (pag && r.pagante !== pag) return false;
       return true;
     });
 
@@ -1519,36 +1608,51 @@
     window.open(encoded, '_blank');
   });
 
-  ['tabModoSelect','tabAnnoSelect','tabPaganteSelect'].forEach(id => {
+  ['tabModoSelect','tabAnnoSelect'].forEach(id => {
     document.getElementById(id).addEventListener('change', renderTabelle);
   });
 
-  // Aggiorna navigazione — i dati sono già in memoria, solo render
-  document.querySelectorAll('.nav-item').forEach(item => {
-    item.addEventListener('click', () => {
-      const s = item.dataset.section;
-      if (s === 'elenco')   loadSheetData();
-      if (s === 'annuale')  renderDashAnnuale();
-      if (s === 'generale') renderDashGenerale();
-      if (s === 'tabelle')  renderTabelle();
-      if (s === 'utenze')   renderUtenze();
-      if (s === 'mutuo')    { if (mAllRate.length) buildMutuo(mAllRate); }
-      if (s === 'cashflow')   renderCashflow();
-      if (s === 'patrimonio') renderPatrimonio();
-      if (s === 'calendario')  { renderCalendario(); }
-    });
-  });
+  // Al cambio sezione i dati sono già in memoria: solo render
+  function renderActiveSection(s) {
+    if (s === 'elenco')   loadSheetData();
+    if (s === 'annuale')  renderDashAnnuale();
+    if (s === 'generale') renderDashGenerale();
+    if (s === 'tabelle')  renderTabelle();
+    if (s === 'utenze')   renderUtenze();
+    if (s === 'mutuo')    { if (mAllRate.length) buildMutuo(mAllRate); }
+    if (s === 'cashflow')   renderCashflow();
+    if (s === 'patrimonio') renderPatrimonio();
+    if (s === 'calendario')  { renderCalendario(); }
+  }
 
   // ─── Sezione Utenze domestiche ────────────────────────────────
   const UTENZE = [
-    { cat: 'Spese condominiali', color: '#5b9bff', label: 'Condominio' },
-    { cat: 'Riscaldamento',      color: '#ff6b35', label: 'Riscaldamento' },
-    { cat: 'Bolletta luce',      color: '#ffb400', label: 'Luce' },
-    { cat: 'Bolletta gas',       color: '#2ecc71', label: 'Gas' },
-    { cat: 'Telefonia',          color: '#a78bfa', label: 'Telefonia' },
-    { cat: 'Bolletta rifiuti',   color: '#888',    label: 'Rifiuti' },
-    { cat: 'Bolletta wifi',      color: '#06b6d4', label: 'Wi-Fi' },
+    { cat: 'Spese condominiali', color: '#5b9bff', label: 'Condominio',
+      icon: `<svg viewBox="0 0 18 18" fill="none"><rect x="4" y="2.5" width="10" height="13" rx="1" stroke="currentColor" stroke-width="1.4"/><line x1="7" y1="6" x2="8.2" y2="6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><line x1="9.8" y1="6" x2="11" y2="6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><line x1="7" y1="9" x2="8.2" y2="9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><line x1="9.8" y1="9" x2="11" y2="9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M8 15.5v-2.5h2v2.5" stroke="currentColor" stroke-width="1.4"/></svg>` },
+    { cat: 'Riscaldamento',      color: '#ff6b35', label: 'Riscaldamento',
+      icon: `<svg viewBox="0 0 18 18" fill="none"><rect x="2.5" y="5" width="13" height="8" rx="1.5" stroke="currentColor" stroke-width="1.4"/><line x1="5.5" y1="5" x2="5.5" y2="13" stroke="currentColor" stroke-width="1.4"/><line x1="9" y1="5" x2="9" y2="13" stroke="currentColor" stroke-width="1.4"/><line x1="12.5" y1="5" x2="12.5" y2="13" stroke="currentColor" stroke-width="1.4"/><line x1="4" y1="15.5" x2="4" y2="13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><line x1="14" y1="15.5" x2="14" y2="13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>` },
+    { cat: 'Bolletta luce',      color: '#ffb400', label: 'Luce',
+      icon: `<svg viewBox="0 0 18 18" fill="none"><path d="M9 2a5 5 0 0 1 2.8 9.14c-.5.35-.8.9-.8 1.51V13H7v-.35c0-.61-.3-1.16-.8-1.51A5 5 0 0 1 9 2z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><line x1="7.2" y1="15" x2="10.8" y2="15" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>` },
+    { cat: 'Bolletta gas',       color: '#2ecc71', label: 'Gas',
+      icon: `<svg viewBox="0 0 18 18" fill="none"><path d="M9 2s4.5 4 4.5 8a4.5 4.5 0 0 1-9 0C4.5 6 9 2 9 2z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M9 8s2 1.8 2 3.4a2 2 0 0 1-4 0C7 9.8 9 8 9 8z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>` },
+    { cat: 'Telefonia',          color: '#a78bfa', label: 'Telefonia',
+      icon: `<svg viewBox="0 0 18 18" fill="none"><rect x="5.5" y="2" width="7" height="14" rx="1.5" stroke="currentColor" stroke-width="1.4"/><line x1="8" y1="13.5" x2="10" y2="13.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>` },
+    { cat: 'Bolletta rifiuti',   color: '#888',    label: 'Rifiuti', fillArea: 'rgba(200,200,200,0.22)',
+      icon: `<svg viewBox="0 0 18 18" fill="none"><path d="M3.5 5h11M7 5V3.5h4V5M5 5l.7 10h6.6L13 5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/><line x1="7.5" y1="7.5" x2="7.8" y2="12.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><line x1="10.5" y1="7.5" x2="10.2" y2="12.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>` },
+    { cat: 'Bolletta wifi',      color: '#06b6d4', label: 'Wi-Fi',
+      icon: `<svg viewBox="0 0 18 18" fill="none"><path d="M2.5 7a9.2 9.2 0 0 1 13 0" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M5 9.8a5.6 5.6 0 0 1 8 0" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M7.4 12.4a2.3 2.3 0 0 1 3.2 0" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="9" cy="14.6" r="1" fill="currentColor"/></svg>` },
   ];
+
+  // Pill "Tutte": mostra tutte le utenze insieme nei grafici
+  const U_ALL = { cat: '__all__', label: 'Tutte', color: '#5b9bff' };
+
+  function uRgba(u, alpha) {
+    if (u.fillArea && alpha <= 0.3) return u.fillArea;
+    const hex = u.color.replace('#','');
+    const full = hex.length === 3 ? hex.split('').map(c=>c+c).join('') : hex;
+    const r = parseInt(full.slice(0,2),16), g = parseInt(full.slice(2,4),16), b = parseInt(full.slice(4,6),16);
+    return `rgba(${r},${g},${b},${alpha})`;
+  }
 
   let uChartPeso = null, uChartArea = null, uChartStacked = null;
 
@@ -1571,7 +1675,7 @@
     else { const y = String(new Date().getFullYear()); if (anni.includes(y)) sel.value = y; }
   }
 
-  ['uAnnoSelect','uPaganteSelect'].forEach(id => {
+  ['uAnnoSelect'].forEach(id => {
     document.getElementById(id).addEventListener('change', renderUtenze);
   });
 
@@ -1581,21 +1685,16 @@
     destroyUtenzeCharts();
 
     const anno    = document.getElementById('uAnnoSelect').value;
-    const pagante = document.getElementById('uPaganteSelect').value;
     const annoPrec = String(parseInt(anno) - 1);
 
     const filterFn = (a) => allRows.filter(r => {
       if (r.anno !== a) return false;
-      if (pagante && r.pagante !== pagante) return false;
       if (r.tipo !== 'Uscite') return false;
       return true;
     });
 
-    // Tutte le uscite filtrate per pagante (tutti gli anni) — per grafici storici
-    const filteredRows = allRows.filter(r => {
-      if (pagante && r.pagante !== pagante) return false;
-      return true;
-    });
+    // Tutte le righe (tutti gli anni) — per grafici storici
+    const filteredRows = allRows;
 
     const rows     = filterFn(anno);
     const rowsPrec = filterFn(annoPrec);
@@ -1632,10 +1731,15 @@
         : `<span class="u-kpi-delta ${delta<=0?'pos':'neg'}">${delta>0?'+':''}${delta.toFixed(1)}% vs ${annoPrec}</span>`;
       kpiGrid.innerHTML += `
         <div class="u-kpi-card" style="--accent-color:${u.color}">
-          <span class="u-kpi-label">${u.label}</span>
+          <div class="u-kpi-head">
+            <span class="u-kpi-icon">${u.icon}</span>
+            <span class="u-kpi-label">${u.label}</span>
+          </div>
           <span class="u-kpi-value">${fmtEur(tot)}</span>
-          <span class="u-kpi-sub">media ${fmtEur(media)}/mese</span>
-          ${deltaHtml}
+          <div class="u-kpi-foot">
+            <span class="u-kpi-sub">media ${fmtEur(media)}/mese</span>
+            ${deltaHtml}
+          </div>
         </div>`;
     });
 
@@ -1685,14 +1789,14 @@
     {
       const anniTutti = [...new Set(allRows.filter(r=>r.tipo==='Uscite').map(r=>r.anno).filter(Boolean))].sort();
       const utenzeDisp = UTENZE.filter(u => allRows.some(r=>r.tipo==='Uscite'&&r.categoria===u.cat));
-      if (!window._uAreaActive || !utenzeDisp.find(u=>u.cat===window._uAreaActive)) {
-        window._uAreaActive = utenzeDisp[0]?.cat;
+      if (!window._uAreaActive || (window._uAreaActive !== U_ALL.cat && !utenzeDisp.find(u=>u.cat===window._uAreaActive))) {
+        window._uAreaActive = U_ALL.cat;
       }
 
-      // Pill
+      // Pill ("Tutte" + una per utenza)
       const pillWrap = document.getElementById('uAreaPills');
       pillWrap.innerHTML = '';
-      utenzeDisp.forEach(u => {
+      [U_ALL, ...utenzeDisp].forEach(u => {
         const pill = document.createElement('div');
         pill.className = 'u-pill' + (u.cat===window._uAreaActive?' active':'');
         pill.textContent = u.label;
@@ -1701,12 +1805,13 @@
           window._uAreaActive = u.cat;
           document.querySelectorAll('#uAreaPills .u-pill').forEach(p=>{ p.classList.remove('active'); p.style.background=''; });
           pill.classList.add('active'); pill.style.background = u.color;
-          buildUAreaChart(anniTutti, u, filteredRows, gridColor, textColor, ticksY);
+          buildUAreaChart(anniTutti, u.cat===U_ALL.cat ? null : u, filteredRows, gridColor, textColor, ticksY, utenzeDisp);
         });
         pillWrap.appendChild(pill);
       });
 
-      buildUAreaChart(anniTutti, utenzeDisp.find(u=>u.cat===window._uAreaActive)||utenzeDisp[0], filteredRows, gridColor, textColor, ticksY);
+      const selA = window._uAreaActive===U_ALL.cat ? null : utenzeDisp.find(u=>u.cat===window._uAreaActive);
+      buildUAreaChart(anniTutti, selA, filteredRows, gridColor, textColor, ticksY, utenzeDisp);
     }
 
     // ── Heatmap con totali (celle vuote bianche) ──
@@ -1728,11 +1833,6 @@
         const mAtt = mensili[u.cat].filter(v=>v>0).length||1;
         mensili[u.cat].forEach((v,i) => { totRow[i]+=v; });
 
-        const hex = u.color.replace('#','');
-        const r   = parseInt(hex.slice(0,2),16);
-        const g   = parseInt(hex.slice(2,4),16);
-        const b   = parseInt(hex.slice(4,6),16);
-
         th += `<tr>`;
         th += `<td style="font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;color:var(--text-secondary);">${u.label}</td>`;
         mensili[u.cat].forEach(v => {
@@ -1740,9 +1840,9 @@
             th += `<td style="text-align:right;font-family:'Space Mono',monospace;font-size:11px;background:transparent;"></td>`;
           } else {
             const intensity = v/maxVal;
-            const alpha     = (0.1 + intensity*0.7).toFixed(2);
+            const alpha     = +(0.1 + intensity*0.7).toFixed(2);
             const textCol   = intensity > 0.5 ? '#fff' : 'var(--text-primary)';
-            th += `<td style="text-align:right;font-family:'Space Mono',monospace;font-size:11px;background:rgba(${r},${g},${b},${alpha});color:${textCol};">${v.toLocaleString('it-IT',{maximumFractionDigits:0})}</td>`;
+            th += `<td style="text-align:right;font-family:'Space Mono',monospace;font-size:11px;background:${uRgba(u, alpha)};color:${textCol};">${v.toLocaleString('it-IT',{maximumFractionDigits:0})}</td>`;
           }
         });
         th += `<td class="col-tot" style="font-weight:700;">${fmtEur(tot)}</td>`;
@@ -1763,13 +1863,13 @@
     {
       const anniTutti = [...new Set(allRows.filter(r=>r.tipo==='Uscite').map(r=>r.anno).filter(Boolean))].sort();
       const utenzeDisp = UTENZE.filter(u => filteredRows.some(r=>r.tipo==='Uscite'&&r.categoria===u.cat));
-      if (!window._uStackedActive || !utenzeDisp.find(u=>u.cat===window._uStackedActive)) {
-        window._uStackedActive = utenzeDisp[0]?.cat;
+      if (!window._uStackedActive || (window._uStackedActive !== U_ALL.cat && !utenzeDisp.find(u=>u.cat===window._uStackedActive))) {
+        window._uStackedActive = U_ALL.cat;
       }
 
       const pillWrap2 = document.getElementById('uStackedPills');
       pillWrap2.innerHTML = '';
-      utenzeDisp.forEach(u => {
+      [U_ALL, ...utenzeDisp].forEach(u => {
         const pill = document.createElement('div');
         pill.className = 'u-pill' + (u.cat===window._uStackedActive?' active':'');
         pill.textContent = u.label;
@@ -1778,45 +1878,46 @@
           window._uStackedActive = u.cat;
           document.querySelectorAll('#uStackedPills .u-pill').forEach(p=>{ p.classList.remove('active'); p.style.background=''; });
           pill.classList.add('active'); pill.style.background = u.color;
-          buildUMonthlyChart(anniTutti, utenzeDisp.find(u=>u.cat===window._uStackedActive), filteredRows, gridColor, textColor, ticksY);
+          buildUMonthlyChart(anniTutti, u.cat===U_ALL.cat ? null : u, filteredRows, gridColor, textColor, ticksY, utenzeDisp);
         });
         pillWrap2.appendChild(pill);
       });
 
-      buildUMonthlyChart(anniTutti, utenzeDisp.find(u=>u.cat===window._uStackedActive)||utenzeDisp[0], filteredRows, gridColor, textColor, ticksY);
+      const selS = window._uStackedActive===U_ALL.cat ? null : utenzeDisp.find(u=>u.cat===window._uStackedActive);
+      buildUMonthlyChart(anniTutti, selS, filteredRows, gridColor, textColor, ticksY, utenzeDisp);
     }
   }
 
-  function buildUAreaChart(anniTutti, u, filteredRows, gridColor, textColor, ticksY) {
+  function buildUAreaChart(anniTutti, u, filteredRows, gridColor, textColor, ticksY, utenzeDisp) {
     if (uChartArea) uChartArea.destroy();
     const oldA = document.getElementById('uChartArea');
     if (oldA) { const nc = document.createElement('canvas'); nc.id='uChartArea'; oldA.parentNode.replaceChild(nc,oldA); }
 
-    // Aggrega per anno usando solo le righe già filtrate per pagante
-    const data = anniTutti.map(a =>
-      filteredRows.filter(r=>r.tipo==='Uscite'&&r.categoria===u.cat&&r.anno===a)
-                  .reduce((s,r)=>s+parseCosto(r.costo),0)
-    );
+    // u = null → tutte le utenze insieme
+    const list = u ? [u] : (utenzeDisp || []);
 
-    const hex = u.color.replace('#','');
-    const ri=parseInt(hex.slice(0,2),16), gi=parseInt(hex.slice(2,4),16), bi=parseInt(hex.slice(4,6),16);
+    const datasets = list.map(x => ({
+      label: x.label,
+      data: anniTutti.map(a =>
+        filteredRows.filter(r=>r.tipo==='Uscite'&&r.categoria===x.cat&&r.anno===a)
+                    .reduce((s,r)=>s+parseCosto(r.costo),0)
+      ),
+      borderColor: x.color,
+      backgroundColor: uRgba(x, 0.15),
+      borderWidth: 2.5, fill: true, tension: 0.35,
+      pointRadius: u ? 5 : 3,
+      pointBackgroundColor: x.color
+    }));
 
     uChartArea = new Chart(document.getElementById('uChartArea'), {
       type: 'line',
-      data: {
-        labels: anniTutti,
-        datasets: [{
-          label: u.label, data,
-          borderColor: u.color,
-          backgroundColor: `rgba(${ri},${gi},${bi},0.15)`,
-          borderWidth: 2.5, fill: true, tension: 0.35, pointRadius: 5,
-          pointBackgroundColor: u.color
-        }]
-      },
+      data: { labels: anniTutti, datasets },
       options: {
         responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { display: false },
-          tooltip: { callbacks: { label: ctx => ' '+fmtEur(ctx.parsed.y) } } },
+        plugins: {
+          legend: { display: !u, position: 'bottom', labels: { boxWidth: 12, padding: 12 } },
+          tooltip: { callbacks: { label: ctx => ' ' + ctx.dataset.label + ': ' + fmtEur(ctx.parsed.y) } }
+        },
         scales: {
           x: { grid: { color: gridColor }, ticks: { color: textColor } },
           y: { grid: { color: gridColor }, ticks: ticksY }
@@ -1826,46 +1927,48 @@
   }
 
 
-  function buildUMonthlyChart(anniTutti, u, filteredRows, gridColor, textColor, ticksY) {
+  function buildUMonthlyChart(anniTutti, u, filteredRows, gridColor, textColor, ticksY, utenzeDisp) {
     if (uChartStacked) uChartStacked.destroy();
     const oldS = document.getElementById('uChartStacked');
     if (oldS) { const nc = document.createElement('canvas'); nc.id='uChartStacked'; oldS.parentNode.replaceChild(nc,oldS); }
 
     // Etichette: "Gen 2024", "Feb 2024", ... per tutti gli anni
     const labels = [];
-    const data   = [];
-    anniTutti.forEach(anno => {
-      MESI_LABEL.forEach((ml, mi) => {
-        labels.push(`${ml} ${anno}`);
-        const v = filteredRows.filter(r=>r.tipo==='Uscite'&&r.categoria===u.cat&&r.anno===anno&&parseInt(r.mese)===mi+1)
-                              .reduce((s,r)=>s+parseCosto(r.costo),0);
-        data.push(v || null); // null per celle vuote (non disegna barra)
-      });
-    });
+    anniTutti.forEach(anno => MESI_LABEL.forEach(ml => labels.push(`${ml} ${anno}`)));
 
-    const hex = u.color.replace('#','');
-    const ri=parseInt(hex.slice(0,2),16), gi=parseInt(hex.slice(2,4),16), bi=parseInt(hex.slice(4,6),16);
+    // u = null → tutte le utenze insieme (barre impilate)
+    const list = u ? [u] : (utenzeDisp || []);
+
+    const datasets = list.map(x => {
+      const data = [];
+      anniTutti.forEach(anno => {
+        MESI_LABEL.forEach((ml, mi) => {
+          const v = filteredRows.filter(r=>r.tipo==='Uscite'&&r.categoria===x.cat&&r.anno===anno&&parseInt(r.mese)===mi+1)
+                                .reduce((s,r)=>s+parseCosto(r.costo),0);
+          data.push(v || null); // null per celle vuote (non disegna barra)
+        });
+      });
+      return {
+        label: x.label,
+        data,
+        backgroundColor: uRgba(x, 0.75),
+        borderRadius: 3,
+        borderSkipped: false,
+      };
+    });
 
     uChartStacked = new Chart(document.getElementById('uChartStacked'), {
       type: 'bar',
-      data: {
-        labels,
-        datasets: [{
-          label: u.label,
-          data,
-          backgroundColor: `rgba(${ri},${gi},${bi},0.75)`,
-          borderRadius: 3,
-          borderSkipped: false,
-        }]
-      },
+      data: { labels, datasets },
       options: {
         responsive: true, maintainAspectRatio: false,
         plugins: {
-          legend: { display: false },
-          tooltip: { callbacks: { label: ctx => ctx.parsed.y ? ' ' + fmtEur(ctx.parsed.y) : '' } }
+          legend: { display: !u, position: 'bottom', labels: { boxWidth: 12, padding: 12 } },
+          tooltip: { callbacks: { label: ctx => ctx.parsed.y ? ' ' + ctx.dataset.label + ': ' + fmtEur(ctx.parsed.y) : '' } }
         },
         scales: {
           x: {
+            stacked: !u,
             grid: { color: gridColor },
             ticks: {
               color: textColor,
@@ -1876,7 +1979,7 @@
               }
             }
           },
-          y: { grid: { color: gridColor }, ticks: ticksY }
+          y: { stacked: !u, grid: { color: gridColor }, ticks: ticksY }
         }
       }
     });
@@ -2102,6 +2205,14 @@
         <td style="color:var(--accent-amber);">${r[6]?fmtEur(parseMutuoNum(r[6])):''}</td>
         <td class="pos">${r[7]?fmtEur(parseMutuoNum(r[7])):''}</td>
       </tr>`;
+      // Riga dettaglio (solo mobile, espansa al tap)
+      h += `<tr class="m-detail"><td colspan="3">
+        <div class="m-detail-row"><span class="m-detail-label">Rata nr</span><span class="m-detail-val">${r[0]||''}</span></div>
+        <div class="m-detail-row"><span class="m-detail-label">Debito pagato</span><span class="m-detail-val pos">${r[3]?fmtEur(parseMutuoNum(r[3])):'—'}</span></div>
+        <div class="m-detail-row"><span class="m-detail-label">% pagata</span><span class="m-detail-val">${r[4]?parseFloat(String(r[4]).replace(',','.')).toFixed(1)+'%':'—'}</span></div>
+        <div class="m-detail-row"><span class="m-detail-label">Interesse</span><span class="m-detail-val" style="color:var(--accent-amber);">${r[6]?fmtEur(parseMutuoNum(r[6])):'—'}</span></div>
+        <div class="m-detail-row"><span class="m-detail-label">Capitale</span><span class="m-detail-val pos">${r[7]?fmtEur(parseMutuoNum(r[7])):'—'}</span></div>
+      </td></tr>`;
     });
 
     h += '</tbody>';
@@ -2115,7 +2226,6 @@
     if (!allRows.length) return;
 
     const cfAnnoEl   = document.getElementById('cfAnnoSelect');
-    const cfPagEl    = document.getElementById('cfPaganteSelect');
 
     // Popola anni
     const anniDisp = [...new Set(allRows.map(r => r.anno).filter(Boolean))].sort((a,b) => b-a);
@@ -2123,8 +2233,7 @@
       anniDisp.forEach(a => { const o = document.createElement('option'); o.value = a; o.textContent = a; cfAnnoEl.appendChild(o); });
     }
 
-    const anno    = cfAnnoEl.value || anniDisp[0];
-    const pagante = cfPagEl.value;
+    const anno = cfAnnoEl.value || anniDisp[0];
     if (!cfAnnoEl.value) cfAnnoEl.value = anno;
 
     const fmtEur = v => v.toLocaleString('it-IT', { style:'currency', currency:'EUR', maximumFractionDigits:0 });
@@ -2132,7 +2241,6 @@
 
     // Righe dell'anno selezionato (tutte, per calcolo corretto)
     let rowsAnno = allRows.filter(r => r.anno === anno);
-    if (pagante) rowsAnno = rowsAnno.filter(r => r.pagante === pagante);
 
     // ── Aggregazione per mese ──
     const entratePerMese = Array(12).fill(0);
@@ -2313,7 +2421,7 @@
     document.getElementById('cfTabella').innerHTML = html;
   }
 
-  ['cfAnnoSelect','cfPaganteSelect'].forEach(id => {
+  ['cfAnnoSelect'].forEach(id => {
     document.getElementById(id).addEventListener('change', renderCashflow);
   });
 
@@ -2443,7 +2551,9 @@
 
   function renderCalendario() {
     if (!allRows.length) return;
+    renderCalKpi();
     renderCalGrid();
+    renderProssime();
     renderHeatmap();
     initCalSlider();
     renderCalChart();
@@ -2506,25 +2616,45 @@
   window.calDayClick = function(day) {
     const date = `${calYear}-${String(calMonth+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
     const spese = allRows.filter(r => r.data === date);
+    const giorniSett = ['Domenica','Lunedì','Martedì','Mercoledì','Giovedì','Venerdì','Sabato'];
+    const dObj = new Date(date);
 
-    let html = `<div style="font-weight:600;margin-bottom:12px;font-size:14px">${day}/${calMonth+1}/${calYear}</div>`;
+    let html = `<div style="margin-bottom:14px;">
+      <div style="font-weight:600;font-size:15px;">${giorniSett[dObj.getDay()]} ${day}/${calMonth+1}/${calYear}</div>
+      <div style="font-size:12px;color:var(--text-hint);margin-top:2px;">${spese.length ? spese.length + (spese.length === 1 ? ' operazione — tocca per modificare' : ' operazioni — tocca per modificare') : ''}</div>
+    </div>`;
 
     if (spese.length) {
-      html += `<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px">`;
+      const totUsc = spese.filter(r => r.tipo === 'Uscite').reduce((s,r) => s + parseCosto(r.costo), 0);
+      const totEnt = spese.filter(r => r.tipo === 'Entrate').reduce((s,r) => s + parseCosto(r.costo), 0);
+
+      html += `<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px">`;
       spese.forEach(r => {
-        const v = parseFloat(String(r.costo).replace(',','.')) || 0;
-        const col = r.tipo === 'Entrate' ? 'var(--accent-green)' : 'var(--accent-red)';
-        html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:var(--bg1);border-radius:8px;font-size:13px">
-          <span>${r.descrizione || r.categoria}</span>
-          <span style="color:${col};font-family:'Space Mono',monospace;font-size:12px">${v.toLocaleString('it-IT',{style:'currency',currency:'EUR'})}</span>
+        const v = parseCosto(r.costo);
+        const isUsc = r.tipo !== 'Entrate';
+        html += `<div class="calp-row" onclick="calEditSpesa(${r.rowIndex})" title="Modifica">
+          <div style="min-width:0;flex:1;">
+            <div class="calp-desc">${escHtml(r.descrizione || r.categoria)}</div>
+            <div class="calp-cat">${escHtml(r.categoria)}</div>
+          </div>
+          <span class="calp-val ${isUsc ? 'neg' : 'pos'}">${isUsc ? '−' : '+'}${v.toLocaleString('it-IT',{style:'currency',currency:'EUR'})}</span>
+          <svg class="calp-pen" width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M9 2l2 2-7 7H2V9L9 2z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
         </div>`;
       });
       html += '</div>';
+
+      html += `<div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-secondary);border-top:1px solid var(--border-idle);padding-top:10px;margin-bottom:14px;">
+        <span>${totEnt > 0 ? 'Entrate <b style="color:var(--accent-green)">' + totEnt.toLocaleString('it-IT',{style:'currency',currency:'EUR'}) + '</b>' : ''}</span>
+        <span>${totUsc > 0 ? 'Uscite <b style="color:var(--accent-red)">' + totUsc.toLocaleString('it-IT',{style:'currency',currency:'EUR'}) + '</b>' : ''}</span>
+      </div>`;
     } else {
-      html += `<div style="color:var(--text-secondary);font-size:13px;margin-bottom:14px">Nessuna spesa registrata.</div>`;
+      html += `<div style="color:var(--text-secondary);font-size:13px;margin-bottom:14px">Nessuna spesa registrata in questo giorno.</div>`;
     }
 
-    html += `<button class="btn-primary" style="width:100%" onclick="calOpenInsert('${date}')">+ Nuova spesa</button>`;
+    html += `<button class="btn-submit" style="width:100%;justify-content:center;" onclick="calOpenInsert('${date}')">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 2v10M2 7h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      Nuova spesa
+    </button>`;
     document.getElementById('calPopupBody').innerHTML = html;
 
     const popup = document.getElementById('calPopup');
@@ -2534,11 +2664,23 @@
   window.calOpenInsert = function(date) {
     document.getElementById('calPopup').style.display = 'none';
     // Apri il form inserimento con data precompilata
-    document.querySelector('[data-section="inserimento"]').click();
-    setTimeout(() => {
-      const inp = document.getElementById('inpData');
-      if (inp) { inp.value = date; inp.dispatchEvent(new Event('change')); }
-    }, 150);
+    showSection('inserimento');
+    const inp = document.getElementById('fieldData');
+    if (inp) inp.value = date;
+  };
+
+  // Click su una voce del popup → vai all'elenco e apri la modifica inline
+  window.calEditSpesa = function(rowIndex) {
+    document.getElementById('calPopup').style.display = 'none';
+    showSection('elenco');
+    // Azzera i filtri così la voce è sicuramente visibile
+    ['fAnno','fMese','fTipo','fCategoria'].forEach(id => { document.getElementById(id).value = ''; });
+    applyFilters();
+    const tr = document.querySelector(`tr[data-row-index="${rowIndex}"]`);
+    if (tr) {
+      tr.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      window.startEdit(null, rowIndex);
+    }
   };
 
   function renderCalChart() {
@@ -2649,33 +2791,49 @@
     const MESI = ['Gen','Feb','Mar','Apr','Mag','Giu','Lug','Ago','Set','Ott','Nov','Dic'];
     const GIORNI = ['L','M','M','G','V','S','D'];
 
+    // ── Dimensione celle adattiva: tutto deve stare nella larghezza disponibile ──
+    // Larghezza utile = container − colonna label giorni (~20px)
+    const availW = Math.max(120, (container.clientWidth || container.parentElement.clientWidth || 320) - 24);
+    let gap   = 3;
+    let cellW = Math.floor((availW - gap * (weeks.length - 1)) / weeks.length);
+    let shownWeeks = weeks;
+    if (cellW < 6) {
+      // Schermo stretto: celle minime 6px, mostra solo le ultime settimane che ci stanno
+      gap = 2;
+      cellW = 6;
+      const fit = Math.max(4, Math.floor((availW + gap) / (cellW + gap)));
+      shownWeeks = weeks.slice(-fit);
+    } else if (cellW > 14) {
+      cellW = 14;
+    }
+
     // Label mesi sopra
-    let monthLabels = '<div style="display:flex;gap:3px;margin-bottom:3px;padding-left:20px;">';
+    let monthLabels = `<div style="display:flex;gap:${gap}px;margin-bottom:3px;padding-left:20px;">`;
     let lastMonth = -1;
-    weeks.forEach((week, wi) => {
+    shownWeeks.forEach((week, wi) => {
       const m = new Date(week[0].date).getMonth();
       if (m !== lastMonth) {
-        monthLabels += `<div style="width:14px;font-size:9px;color:var(--text-hint);white-space:nowrap;">${MESI[m]}</div>`;
+        monthLabels += `<div style="width:${cellW}px;font-size:9px;color:var(--text-hint);white-space:nowrap;overflow:visible;">${MESI[m]}</div>`;
         lastMonth = m;
       } else {
-        monthLabels += '<div style="width:14px;"></div>';
+        monthLabels += `<div style="width:${cellW}px;"></div>`;
       }
     });
     monthLabels += '</div>';
 
     // Griglia: giorni sull'asse Y, settimane su X
-    let grid = '<div style="display:flex;gap:2px;">';
+    let grid = `<div style="display:flex;gap:${gap}px;">`;
     // Label giorni
-    grid += '<div style="display:flex;flex-direction:column;gap:3px;margin-right:4px;">';
-    GIORNI.forEach(g => grid += `<div style="height:14px;font-size:9px;color:var(--text-hint);line-height:14px;">${g}</div>`);
+    grid += `<div style="display:flex;flex-direction:column;gap:${gap}px;margin-right:4px;">`;
+    GIORNI.forEach(g => grid += `<div style="height:${cellW}px;font-size:9px;color:var(--text-hint);line-height:${cellW}px;">${g}</div>`);
     grid += '</div>';
 
-    weeks.forEach(week => {
-      grid += '<div style="display:flex;flex-direction:column;gap:3px;">';
+    shownWeeks.forEach(week => {
+      grid += `<div style="display:flex;flex-direction:column;gap:${gap}px;">`;
       week.forEach(({ date, val, isFuture }) => {
         const color = isFuture ? 'transparent' : getColor(val);
         const tip   = val > 0 ? `${date}: ${fmtEur(val)}` : date;
-        grid += `<div title="${tip}" style="width:14px;height:14px;border-radius:3px;background:${color};cursor:${val>0?'pointer':'default'}"
+        grid += `<div title="${tip}" style="width:${cellW}px;height:${cellW}px;border-radius:2px;background:${color};cursor:${val>0?'pointer':'default'}"
           ${val > 0 ? `onclick="calDayClick(${new Date(date).getDate()}); calYear=${new Date(date).getFullYear()}; calMonth=${new Date(date).getMonth()};"` : ''}></div>`;
       });
       grid += '</div>';
@@ -2691,6 +2849,15 @@
 
     container.innerHTML = monthLabels + grid + legend;
   }
+
+  // Ridisegna la heatmap quando cambia la larghezza (rotazione, resize)
+  let _hmResizeT;
+  window.addEventListener('resize', () => {
+    clearTimeout(_hmResizeT);
+    _hmResizeT = setTimeout(() => {
+      if (state.activeSection === 'calendario') renderHeatmap();
+    }, 200);
+  });
 
   // Dual-handle slider
   function initCalSlider() {
@@ -2774,5 +2941,476 @@
     renderCalGrid();
   });
 
-  // ── Avvio app ──
-  initApp();
+  // ═══ CSV utils ═══════════════════════════════════════════════
+  function csvParseText(text) {
+    const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    if (!lines.length) return [];
+    const delim = (lines[0].match(/;/g) || []).length >= (lines[0].match(/,/g) || []).length ? ';' : ',';
+    return lines.map(l => l.split(delim).map(c => c.trim().replace(/^"(.*)"$/, '$1')));
+  }
+
+  function csvDownload(filename, lines) {
+    const blob = new Blob(['\uFEFF' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  // "dd/mm/yyyy" o "yyyy-mm-dd" → ISO; null se invalida
+  function parseDataFlex(s) {
+    s = String(s || '').trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    const m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/);
+    if (m) return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+    return null;
+  }
+
+  // "1.234,56" | "1234.56" | "12,5" → numero
+  function parseImporto(s) {
+    s = String(s || '').trim().replace(/[€\s]/g, '');
+    if (!s) return NaN;
+    if (s.includes(',')) return parseFloat(s.replace(/\./g, '').replace(',', '.'));
+    return parseFloat(s);
+  }
+
+  // ═══ Elenco spese: import / export CSV ═══════════════════════
+  document.getElementById('btnCsvExport').addEventListener('click', () => {
+    if (!allRows.length) { alert('Nessun dato da esportare.'); return; }
+    const lines = ['Data;Costo;Descrizione;Categoria;Tipo'];
+    [...allRows]
+      .sort((a, b) => new Date(b.data) - new Date(a.data))
+      .forEach(r => lines.push([r.data, r.costo, String(r.descrizione||'').replace(/;/g, ','), r.categoria, r.tipo].join(';')));
+    csvDownload('spese.csv', lines);
+  });
+
+  // Import spese: bottone → modale con istruzioni e modello
+  const csvImportModal = document.getElementById('csvImportModal');
+  document.getElementById('btnCsvImport').addEventListener('click', () => { csvImportModal.style.display = 'flex'; });
+  document.getElementById('csvImpAnnulla').addEventListener('click', () => { csvImportModal.style.display = 'none'; });
+  document.getElementById('btnCsvChooseFile').addEventListener('click', () => {
+    csvImportModal.style.display = 'none';
+    document.getElementById('csvFileInput').click();
+  });
+  document.getElementById('btnCsvTemplate').addEventListener('click', () => {
+    csvDownload('modello-spese.csv', [
+      'Data;Costo;Descrizione;Categoria;Tipo',
+      '15/01/2026;42,50;Spesa supermercato;Spesa;Uscite',
+      '27/01/2026;1500,00;Stipendio gennaio;Stipendio;Entrate',
+    ]);
+  });
+
+  document.getElementById('csvFileInput').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    const cells = csvParseText(await file.text());
+    if (!cells.length) { alert('File vuoto.'); return; }
+
+    let start = /data/i.test(cells[0][0]) ? 1 : 0;
+    const rows = [];
+    let scartate = 0;
+    for (let i = start; i < cells.length; i++) {
+      const c = cells[i];
+      const dataIso = parseDataFlex(c[0]);
+      const costo   = parseImporto(c[1]);
+      const desc    = (c[2] || '').trim();
+      if (!dataIso || isNaN(costo) || !desc) { scartate++; continue; }
+      const d = new Date(dataIso);
+      const tipo = String(c[4] || '').trim().toLowerCase().startsWith('e') ? 'Entrate' : 'Uscite';
+      rows.push([
+        dataIso,
+        costo.toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+        desc,
+        (c[3] || '').trim() || 'Altro',
+        tipo,
+        d.getMonth() + 1,
+        d.getFullYear(),
+      ]);
+    }
+    if (!rows.length) { alert('Nessuna riga valida trovata.\nColonne attese: Data;Costo;Descrizione;Categoria;Tipo'); return; }
+    if (!confirm(`Importare ${rows.length} voci?` + (scartate ? ` (${scartate} righe scartate)` : ''))) return;
+
+    const json = await asCall({ action: 'append_many', rows: JSON.stringify(rows) });
+    if (json.status !== 'ok') { alert('Errore durante l\'import: ' + json.message); return; }
+    allRows = [];
+    sessionStorage.removeItem(CACHE_KEY);
+    initApp(true).then(() => { populateAnnoFilter(); applyFilters(); });
+  });
+
+  // ═══ Mutuo: configurazione + CSV ══════════════════════════════
+  const mutuoModal = document.getElementById('mutuoModal');
+
+  function mcShowError(msg) {
+    const fb = document.getElementById('mcFeedback');
+    fb.textContent = msg;
+    fb.className = 'form-feedback visible error';
+    setTimeout(() => { fb.className = 'form-feedback'; }, 4000);
+  }
+
+  document.getElementById('btnMutuoConfig').addEventListener('click', () => {
+    const now = new Date();
+    const inp = document.getElementById('mcPrimaRata');
+    if (!inp.value) inp.value = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+    mutuoModal.style.display = 'flex';
+  });
+  document.getElementById('mcAnnulla').addEventListener('click', () => { mutuoModal.style.display = 'none'; });
+
+  document.getElementById('mcGenera').addEventListener('click', async () => {
+    const debito = parseFloat(document.getElementById('mcDebito').value);
+    const rata   = parseFloat(document.getElementById('mcRata').value);
+    const tasso  = parseFloat(document.getElementById('mcTasso').value);
+    const giorno = Math.min(28, Math.max(1, parseInt(document.getElementById('mcGiorno').value) || 1));
+    const pm     = document.getElementById('mcPrimaRata').value; // YYYY-MM
+
+    if (!(debito > 0) || !(rata > 0) || isNaN(tasso) || tasso < 0 || !pm) {
+      mcShowError('Compila tutti i campi con valori validi.');
+      return;
+    }
+    const im = tasso / 100 / 12;
+    if (rata <= debito * im) {
+      mcShowError('Rata troppo bassa: non copre gli interessi mensili.');
+      return;
+    }
+    if (mAllRate.length && !confirm('Sostituire il piano di ammortamento esistente?')) return;
+
+    const [py, pmm] = pm.split('-').map(Number);
+    const rows = [];
+    let residuo = debito, nr = 1;
+    let d = new Date(py, pmm - 1, giorno);
+    while (residuo > 0.005 && nr <= 1200) {
+      const interesse = residuo * im;
+      const capitale  = Math.min(rata - interesse, residuo);
+      const pagato    = debito - residuo;
+      const iso = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+      rows.push([
+        nr, iso,
+        residuo.toFixed(2),
+        pagato.toFixed(2),
+        (pagato / debito * 100).toFixed(1),
+        (interesse + capitale).toFixed(2),
+        interesse.toFixed(2),
+        capitale.toFixed(2),
+        '',
+      ]);
+      residuo -= capitale;
+      nr++;
+      d = new Date(d.getFullYear(), d.getMonth() + 1, giorno);
+    }
+
+    const json = await asCall({ action: 'save_meta', doc: 'mutuo', json: JSON.stringify(rows) });
+    if (json.status !== 'ok') { mcShowError('Errore nel salvataggio: ' + json.message); return; }
+    mAllRate = rows;
+    mutuoModal.style.display = 'none';
+    buildMutuo(mAllRate);
+  });
+
+  document.getElementById('btnMutuoCsvTemplate').addEventListener('click', () => {
+    csvDownload('modello-mutuo.csv', [
+      'Nr;Data;Debito;Debito pagato;Percentuale;Rata;Interesse;Capitale;Pagata',
+      '1;01/06/2019;120000.00;0.00;0.0;550.00;250.00;300.00;',
+      '2;01/07/2019;119700.00;300.00;0.3;550.00;249.38;300.62;',
+    ]);
+  });
+
+  // Import mutuo: bottone → modale con istruzioni e modello
+  const mutuoCsvModal = document.getElementById('mutuoCsvModal');
+  document.getElementById('btnMutuoCsvImport').addEventListener('click', () => { mutuoCsvModal.style.display = 'flex'; });
+  document.getElementById('mutuoCsvAnnulla').addEventListener('click', () => { mutuoCsvModal.style.display = 'none'; });
+  document.getElementById('btnMutuoChooseFile').addEventListener('click', () => {
+    mutuoCsvModal.style.display = 'none';
+    document.getElementById('mutuoCsvInput').click();
+  });
+
+  document.getElementById('mutuoCsvInput').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    const cells = csvParseText(await file.text());
+    if (!cells.length) { alert('File vuoto.'); return; }
+
+    const start = /^nr/i.test(cells[0][0]) ? 1 : 0;
+    const rows = cells.slice(start).filter(c => c.length >= 8 && c[1]);
+    if (!rows.length) {
+      alert('Nessuna riga valida.\nColonne attese: Nr;Data;Debito;Debito pagato;Percentuale;Rata;Interesse;Capitale;Pagata');
+      return;
+    }
+    if (mAllRate.length && !confirm(`Sostituire il piano esistente con ${rows.length} rate importate?`)) return;
+
+    const json = await asCall({ action: 'save_meta', doc: 'mutuo', json: JSON.stringify(rows) });
+    if (json.status !== 'ok') { alert('Errore nel salvataggio: ' + json.message); return; }
+    mAllRate = rows;
+    buildMutuo(mAllRate);
+  });
+
+  // ═══ Patrimonio: editor attivi/passivi ════════════════════════
+  const patModal = document.getElementById('patModal');
+  const patList  = document.getElementById('patEditList');
+
+  function patAddEditorRow(item = {}) {
+    const row = document.createElement('div');
+    row.className = 'pat-edit-row';
+    row.innerHTML = `
+      <input class="form-input" type="text" placeholder="Nome asset" value="${escHtml(item.asset || '')}" data-f="asset">
+      <select class="filter-select" data-f="tipologia">
+        <option value="Attivo">Attivo</option>
+        <option value="Passivo">Passivo</option>
+      </select>
+      <input class="form-input" type="number" step="0.01" placeholder="Valore €" value="${item.valore ?? ''}" data-f="valore">
+      <button class="btn-row delete" title="Rimuovi">
+        <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M3 3l7 7M10 3l-7 7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+      </button>`;
+    row.querySelector('[data-f="tipologia"]').value =
+      String(item.tipologia || '').toLowerCase().includes('passiv') ? 'Passivo' : 'Attivo';
+    row.querySelector('button').addEventListener('click', () => row.remove());
+    patList.appendChild(row);
+  }
+
+  document.getElementById('btnPatEdit').addEventListener('click', () => {
+    patList.innerHTML = '';
+    if (patrimonioRows.length) patrimonioRows.forEach(patAddEditorRow);
+    else patAddEditorRow();
+    patModal.style.display = 'flex';
+  });
+
+  document.getElementById('patAddRow').addEventListener('click', () => patAddEditorRow());
+  document.getElementById('patAnnulla').addEventListener('click', () => { patModal.style.display = 'none'; });
+
+  document.getElementById('patSalva').addEventListener('click', async () => {
+    const items = [...patList.children].map(row => ({
+      asset:     row.querySelector('[data-f="asset"]').value.trim(),
+      tipologia: row.querySelector('[data-f="tipologia"]').value,
+      valore:    parseFloat(row.querySelector('[data-f="valore"]').value) || 0,
+    })).filter(i => i.asset);
+
+    const json = await asCall({ action: 'save_meta', doc: 'patrimonio', json: JSON.stringify(items) });
+    if (json.status !== 'ok') { alert('Errore nel salvataggio: ' + json.message); return; }
+    patrimonioRows = items;
+    patModal.style.display = 'none';
+    renderPatrimonio();
+  });
+
+  // ═══ Spese ricorrenti ═════════════════════════════════════════
+  const RIC_FREQ = { mensile: 1, bimestrale: 2, trimestrale: 3, semestrale: 6, annuale: 12 };
+  const RIC_FREQ_LABEL = { mensile: 'Mensile', bimestrale: 'Bimestrale', trimestrale: 'Trimestrale', semestrale: 'Semestrale', annuale: 'Annuale' };
+
+  // Prossima occorrenza >= oggi, avanzando dalla data salvata secondo la frequenza
+  function ricProssima(item) {
+    const step = RIC_FREQ[item.ricorrenza] || 12;
+    const oggi = new Date(); oggi.setHours(0,0,0,0);
+    let d = new Date(item.prossima);
+    if (isNaN(d)) return null;
+    let guard = 0;
+    while (d < oggi && guard < 600) { d = new Date(d.getFullYear(), d.getMonth() + step, d.getDate()); guard++; }
+    return d;
+  }
+
+  function ricGiorniMancanti(d) {
+    const oggi = new Date(); oggi.setHours(0,0,0,0);
+    return Math.round((d - oggi) / 86400000);
+  }
+
+  const fmtEurRic = v => (+v).toLocaleString('it-IT', { style:'currency', currency:'EUR', maximumFractionDigits: 0 });
+
+  // Spese in arrivo entro `giorni`: una riga per spesa (solo la prossima occorrenza)
+  function ricOccorrenze(giorni) {
+    return ricorrentiRows
+      .map((it, idx) => ({ ...it, _idx: idx, next: ricProssima(it) }))
+      .filter(it => it.next && ricGiorniMancanti(it.next) <= giorni)
+      .sort((a, b) => a.next - b.next);
+  }
+
+  // Tick "pagata": avanza la ricorrenza alla prossima occorrenza e salva.
+  // La voce resta in "Gestisci", sparisce da prossime spese e notifiche.
+  window.ricPagata = async function(idx) {
+    const it = ricorrentiRows[idx];
+    if (!it) return;
+    const cur = ricProssima(it);
+    if (!cur) return;
+    const step = RIC_FREQ[it.ricorrenza] || 12;
+    const next = new Date(cur.getFullYear(), cur.getMonth() + step, cur.getDate());
+    it.prossima = `${next.getFullYear()}-${String(next.getMonth()+1).padStart(2,'0')}-${String(next.getDate()).padStart(2,'0')}`;
+
+    const json = await asCall({ action: 'save_meta', doc: 'ricorrenti', json: JSON.stringify(ricorrentiRows) });
+    if (json.status !== 'ok') { alert('Errore nel salvataggio: ' + json.message); return; }
+    renderProssime();
+    renderCalKpi();
+    updateNotifiche();
+  };
+
+  // Card "Prossime spese" con pill Settimana / Mese / Anno
+  let ricRangeDays = 31;
+
+  function renderProssime() {
+    const list = document.getElementById('ricUpcomingList');
+    const occ = ricOccorrenze(ricRangeDays);
+    if (!occ.length) {
+      list.innerHTML = ricorrentiRows.length
+        ? '<p style="color:var(--text-hint);font-size:13px;">Nessuna spesa in arrivo nel periodo selezionato.</p>'
+        : '<p style="color:var(--text-hint);font-size:13px;">Nessuna ricorrenza configurata. Usa "Gestisci" per aggiungerne.</p>';
+      return;
+    }
+    list.innerHTML = occ.map(it => {
+      const giorni = ricGiorniMancanti(it.next);
+      const urgente = giorni <= 31;
+      const quando = giorni === 0 ? 'oggi' : giorni === 1 ? 'domani' : `tra ${giorni} giorni`;
+      return `
+        <div class="ric-row${urgente ? ' urgente' : ''}">
+          <span class="ric-nome">${escHtml(it.nome)}</span>
+          <span class="ric-freq">${RIC_FREQ_LABEL[it.ricorrenza] || it.ricorrenza}</span>
+          <span class="ric-importo">${it.importo ? fmtEurRic(it.importo) : ''}</span>
+          <span class="ric-data">${it.next.toLocaleDateString('it-IT')}</span>
+          <span class="tag ${urgente ? 'tag-amber' : 'tag-neutral'}">${quando}</span>
+          <button class="btn-row save" title="Segna come pagata" onclick="ricPagata(${it._idx})">
+            <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M2 7l3.5 3.5L11 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>`;
+    }).join('');
+  }
+
+  document.querySelectorAll('#ricRangePills .u-pill').forEach(pill => {
+    pill.addEventListener('click', () => {
+      document.querySelectorAll('#ricRangePills .u-pill').forEach(p => p.classList.remove('active'));
+      pill.classList.add('active');
+      ricRangeDays = parseInt(pill.dataset.range);
+      renderProssime();
+    });
+  });
+
+  // KPI della sezione calendario
+  function renderCalKpi() {
+    const oggi = new Date();
+    const anno = String(oggi.getFullYear());
+    const mese = oggi.getMonth() + 1;
+    const prevAnno = mese === 1 ? String(oggi.getFullYear() - 1) : anno;
+    const prevMese = mese === 1 ? 12 : mese - 1;
+
+    // Spesa in arrivo: l'occorrenza più vicina
+    const prox = ricOccorrenze(365)[0];
+    const kProx = document.getElementById('calKpiProssima');
+    const kProxSub = document.getElementById('calKpiProssimaSub');
+    if (prox) {
+      const giorni = ricGiorniMancanti(prox.next);
+      kProx.textContent = prox.nome + (prox.importo ? ` · ${fmtEurRic(prox.importo)}` : '');
+      kProxSub.textContent = `${prox.next.toLocaleDateString('it-IT')} — ${giorni === 0 ? 'oggi' : giorni === 1 ? 'domani' : 'tra ' + giorni + ' giorni'}`;
+    } else {
+      kProx.textContent = '—';
+      kProxSub.textContent = 'nessuna ricorrenza configurata';
+    }
+
+    const opsOf = (a, m) => allRows.filter(r => r.anno === a && parseInt(r.mese) === m);
+    const cur  = opsOf(anno, mese);
+    const prev = opsOf(prevAnno, prevMese);
+    const uscTot = rows => rows.filter(r => r.tipo === 'Uscite').reduce((s,r) => s + parseCosto(r.costo), 0);
+
+    document.getElementById('calKpiOpsCur').textContent = cur.length;
+    document.getElementById('calKpiOpsCurSub').textContent = `uscite ${fmtEur(uscTot(cur))}`;
+    document.getElementById('calKpiOpsPrev').textContent = prev.length;
+    document.getElementById('calKpiOpsPrevSub').textContent = `uscite ${fmtEur(uscTot(prev))}`;
+  }
+
+  // ═══ Notifiche (campanella in header) ═════════════════════════
+  function updateNotifiche() {
+    const inArrivo = ricOccorrenze(31);
+    const badge = document.getElementById('notifBadge');
+    const list  = document.getElementById('notifList');
+
+    badge.style.display = inArrivo.length ? 'flex' : 'none';
+    badge.textContent = inArrivo.length;
+
+    list.innerHTML = inArrivo.length
+      ? inArrivo.map(it => {
+          const giorni = ricGiorniMancanti(it.next);
+          const quando = giorni === 0 ? 'oggi' : giorni === 1 ? 'domani' : `tra ${giorni} giorni`;
+          return `<div class="notif-item">
+            <div>
+              <div class="notif-nome">${escHtml(it.nome)}${it.importo ? ' · ' + fmtEurRic(it.importo) : ''}</div>
+              <div class="notif-sub">${it.next.toLocaleDateString('it-IT')} — ${quando}</div>
+            </div>
+          </div>`;
+        }).join('')
+      : '<p class="notif-empty">Nessuna notifica.</p>';
+  }
+
+  const notifPanel = document.getElementById('notifPanel');
+  document.getElementById('notifBtn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    notifPanel.style.display = notifPanel.style.display === 'none' ? 'block' : 'none';
+  });
+  document.addEventListener('click', (e) => {
+    if (notifPanel.style.display !== 'none' && !e.target.closest('.notif-wrap')) {
+      notifPanel.style.display = 'none';
+    }
+  });
+
+  // Editor ricorrenze (modale)
+  const ricModal = document.getElementById('ricModal');
+  const ricEditList = document.getElementById('ricEditList');
+
+  function ricAddEditorRow(item = {}) {
+    const row = document.createElement('div');
+    row.className = 'ric-edit-row';
+    const freqOpts = Object.keys(RIC_FREQ)
+      .map(f => `<option value="${f}">${RIC_FREQ_LABEL[f]}</option>`).join('');
+    row.innerHTML = `
+      <input class="form-input" type="text" placeholder="Nome (es. Bollo auto)" value="${escHtml(item.nome || '')}" data-f="nome">
+      <input class="form-input" type="number" step="0.01" placeholder="Importo €" value="${item.importo ?? ''}" data-f="importo">
+      <select class="filter-select" data-f="ricorrenza">${freqOpts}</select>
+      <input class="form-input" type="date" value="${item.prossima || ''}" data-f="prossima">
+      <button class="btn-row delete" title="Rimuovi">
+        <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M3 3l7 7M10 3l-7 7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+      </button>`;
+    if (item.ricorrenza) row.querySelector('[data-f="ricorrenza"]').value = item.ricorrenza;
+    row.querySelector('button').addEventListener('click', () => row.remove());
+    ricEditList.appendChild(row);
+  }
+
+  document.getElementById('btnRicEdit').addEventListener('click', () => {
+    ricEditList.innerHTML = '';
+    if (ricorrentiRows.length) ricorrentiRows.forEach(ricAddEditorRow);
+    else ricAddEditorRow();
+    ricModal.style.display = 'flex';
+  });
+
+  document.getElementById('ricAddRow').addEventListener('click', () => ricAddEditorRow());
+  document.getElementById('ricAnnulla').addEventListener('click', () => { ricModal.style.display = 'none'; });
+
+  document.getElementById('ricSalva').addEventListener('click', async () => {
+    const items = [...ricEditList.children].map(row => ({
+      nome:       row.querySelector('[data-f="nome"]').value.trim(),
+      importo:    parseFloat(row.querySelector('[data-f="importo"]').value) || 0,
+      ricorrenza: row.querySelector('[data-f="ricorrenza"]').value,
+      prossima:   row.querySelector('[data-f="prossima"]').value,
+    })).filter(i => i.nome && i.prossima);
+
+    const json = await asCall({ action: 'save_meta', doc: 'ricorrenti', json: JSON.stringify(items) });
+    if (json.status !== 'ok') { alert('Errore nel salvataggio: ' + json.message); return; }
+    ricorrentiRows = items;
+    ricModal.style.display = 'none';
+    renderProssime();
+    renderCalKpi();
+    updateNotifiche();
+  });
+
+  // ── Logout ──
+  document.getElementById('logoutBtn').addEventListener('click', async () => {
+    sessionStorage.removeItem(CACHE_KEY);
+    await firebase.auth().signOut();
+    window.location.replace('login.html');
+  });
+
+  // ── Avvio app (solo dopo auth Firebase) ──
+  bmAuthReady.then(user => {
+    if (!bmIsAllowed(user)) return; // redirect gestito dal guard in app.html
+
+    // Avatar Google in header
+    const av = document.getElementById('userAvatar');
+    if (user.photoURL) {
+      av.src = user.photoURL;
+      av.style.display = 'block';
+    }
+    av.title = user.displayName || user.email;
+
+    initApp();
+  });
