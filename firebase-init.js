@@ -15,7 +15,7 @@ const BM_FIREBASE_CONFIG = {
 // in console ogni volta che la modifichi).
 const BM_ALLOWED_EMAILS = [
   'silvio.phy@gmail.com',
-  // 'altra.persona@gmail.com',
+  'chiaraluca.mail@gmail.com',
 ];
 
 firebase.initializeApp(BM_FIREBASE_CONFIG);

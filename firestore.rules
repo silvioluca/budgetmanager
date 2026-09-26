@@ -1,0 +1,21 @@
+rules_version = '2';
+
+// IMPORTANTE: questa lista deve combaciare con BM_ALLOWED_EMAILS in firebase-init.js.
+// Dopo ogni modifica: firebase deploy --only firestore:rules
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAllowed() {
+      return request.auth != null && request.auth.token.email in [
+        'silvio.phy@gmail.com', 
+        'chiaraluca.mail@gmail.com'
+      ];
+    }
+
+    // Ogni utente autorizzato legge/scrive solo il proprio spazio users/{uid}/…
+    match /users/{uid}/{document=**} {
+      allow read, write: if isAllowed() && request.auth.uid == uid;
+    }
+
+    // Tutto il resto è negato di default.
+  }
+}

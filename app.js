@@ -575,7 +575,7 @@
             <button class="btn-row edit" title="Modifica" onclick="startEdit(this, ${r.rowIndex})">
               <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M9 2l2 2-7 7H2V9L9 2z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
             </button>
-            <button class="btn-row delete" title="Elimina" onclick="askDelete(${r.rowIndex}, '${escAttr(r.descrizione)}', '${escAttr(r.costo)}')">
+            <button class="btn-row delete" title="Elimina" onclick="askDelete(${r.rowIndex})">
               <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M2 3.5h9M5 3.5V2.5h3v1M4 3.5l.5 7h4l.5-7" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </button>
           </div>`;
@@ -622,7 +622,6 @@
     return d;
   }
   function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-  function escAttr(s) { return String(s).replace(/'/g,"\\'"); }
 
   // ─── Modifica inline ──────────────────────────────────────────
   window.startEdit = function(btn, rowIndex) {
@@ -685,9 +684,10 @@
   };
 
   // ─── Eliminazione ─────────────────────────────────────────────
-  window.askDelete = function(rowIndex, desc, costo) {
+  window.askDelete = function(rowIndex) {
+    const r = allRows.find(row => row.rowIndex === rowIndex);
     deleteTarget = rowIndex;
-    modalDesc.textContent = `"${desc}" — ${costo} €`;
+    modalDesc.textContent = r ? `"${r.descrizione}" — ${r.costo} €` : '';
     deleteModal.style.display = 'flex';
   };
 
@@ -846,7 +846,7 @@
     const top10El = document.getElementById('top10List');
     top10El.innerHTML = top10.length ? top10.map(([nome, val]) => `
       <div class="topn-row">
-        <span class="topn-name">${nome}</span>
+        <span class="topn-name">${escHtml(nome)}</span>
         <div class="topn-bar-wrap"><div class="topn-bar" style="width:${(val/top10max*100).toFixed(1)}%"></div></div>
         <span class="topn-amount">${fmtEur(val)}</span>
       </div>`).join('') : '<p style="color:var(--text-hint);font-size:13px;padding:8px 0;">Nessun dato</p>';
@@ -1293,7 +1293,7 @@
     const top10 = Object.entries(top10map).sort((a,b)=>b[1]-a[1]).slice(0,10);
     const top10max = top10[0]?.[1] || 1;
     document.getElementById('gTop10List').innerHTML = top10.length
-      ? top10.map(([nome,val]) => `<div class="topn-row"><span class="topn-name">${nome}</span><div class="topn-bar-wrap"><div class="topn-bar" style="width:${(val/top10max*100).toFixed(1)}%"></div></div><span class="topn-amount">${fmtEur(val)}</span></div>`).join('')
+      ? top10.map(([nome,val]) => `<div class="topn-row"><span class="topn-name">${escHtml(nome)}</span><div class="topn-bar-wrap"><div class="topn-bar" style="width:${(val/top10max*100).toFixed(1)}%"></div></div><span class="topn-amount">${fmtEur(val)}</span></div>`).join('')
       : '<p style="color:var(--text-hint);font-size:13px;padding:8px 0;">Nessun dato</p>';
 
     const isDark    = document.documentElement.getAttribute('data-theme') !== 'light';
@@ -2575,7 +2575,7 @@
         const isAtt = r.tipologia.toLowerCase().includes('attiv');
         legHtml += `<div style="display:flex;align-items:center;gap:8px;font-size:12px;">
           <div style="width:10px;height:10px;border-radius:50%;background:${donutColors[i]};flex-shrink:0;"></div>
-          <span style="color:var(--text-secondary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${r.asset}">${r.asset}</span>
+          <span style="color:var(--text-secondary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escHtml(r.asset)}">${escHtml(r.asset)}</span>
           <span style="font-family:'Space Mono',monospace;font-size:11px;color:${isAtt?'var(--accent-green)':'var(--accent-red)'};white-space:nowrap;">${pct}%</span>
           <span style="font-family:'Space Mono',monospace;font-size:11px;color:var(--text-secondary);white-space:nowrap;">${fmtEur(r.valore)}</span>
         </div>`;
@@ -2591,7 +2591,7 @@
       arr.sort((a,b) => b.valore-a.valore).forEach(r => {
         const pct = tot > 0 ? (r.valore/tot*100).toFixed(1) : '0.0';
         h += `<tr>
-          <td style="font-weight:600">${r.asset}</td>
+          <td style="font-weight:600">${escHtml(r.asset)}</td>
           <td style="text-align:right;font-family:'Space Mono',monospace;font-size:12px" class="${colorClass}">${fmtEur(r.valore)}</td>
           <td style="text-align:right;color:var(--text-secondary);font-size:12px">${pct}%</td>
         </tr>`;
