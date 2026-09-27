@@ -24,9 +24,15 @@ firebase.initializeApp(BM_FIREBASE_CONFIG);
 // questa pagina (non da script/bot). Console Firebase → App Check → registra
 // l'app web → provider reCAPTCHA v3 → incolla qui la site key.
 const BM_RECAPTCHA_SITE_KEY = '6LeNmNAtAAAAAD2vog0fDnE9uXXaxYiyV1w3j6LA';
-if (BM_RECAPTCHA_SITE_KEY) {
-  firebase.appCheck().activate(BM_RECAPTCHA_SITE_KEY, true);
+// L'attivazione inietta il badge reCAPTCHA nel <body>: va rimandata a quando
+// il <body> esiste davvero, altrimenti fallisce (gli script sono in <head>).
+function bmActivateAppCheck() {
+  if (BM_RECAPTCHA_SITE_KEY) {
+    firebase.appCheck().activate(BM_RECAPTCHA_SITE_KEY, true);
+  }
 }
+if (document.body) bmActivateAppCheck();
+else document.addEventListener('DOMContentLoaded', bmActivateAppCheck);
 
 // Risolve con l'utente (o null) al primo stato auth noto
 const bmAuthReady = new Promise(resolve => {
