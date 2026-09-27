@@ -24,7 +24,7 @@ firebase.initializeApp(BM_FIREBASE_CONFIG);
 // questa pagina (non da script/bot). Console Firebase → App Check → registra
 // l'app web → provider reCAPTCHA Enterprise → incolla qui la site key
 // (creata in Google Cloud Console → reCAPTCHA Enterprise, non su recaptcha admin).
-const BM_RECAPTCHA_SITE_KEY = '6LeNmNAtAAAAAD2vog0fDnE9uXXaxYiyV1w3j6LA';
+const BM_RECAPTCHA_SITE_KEY = '6LdmxdEtAAAAAOVCy6RmJse7nmHz8q8yk22yDpCO';
 // L'attivazione inietta il badge reCAPTCHA nel <body>: va rimandata a quando
 // il <body> esiste davvero, altrimenti fallisce (gli script sono in <head>).
 function bmActivateAppCheck() {
